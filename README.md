@@ -71,5 +71,3 @@ $$\frac{dS_t}{S_t} = \mu dt + \sigma dW_t$$
 2.  **Select Window**: Choose the lookback period for volatility calculation (e.g., 30-day, 90-day).
 3.  **Run Simulation**: Trigger `simulator.py` to generate potential future price paths based on current volatility regimes.
 
-## 📜 License
-Open Source.

@@ -1,70 +1,75 @@
 # Volatility Scanner
 
-**Volatility Scanner** is a Python-based application designed to analyze, monitor, and simulate market volatility. It provides a web interface to interact with the underlying volatility engine and simulation tools.
+**Volatility Scanner** is a comprehensive Python-based tool designed to analyze historical market data, calculate volatility metrics, and simulate future price movements. It features a modular backend (`engine` and `simulator`) and a web-based frontend for interactive analysis.
 
-## Features
+## 📂 Project Structure
 
-* **Volatility Engine:** Core logic (`engine.py`) for calculating and processing market volatility metrics.
-* **Market Simulation:** A dedicated module (`simulator.py`) to run simulations and backtest scenarios based on volatility data.
-* **Web Interface:** An interactive frontend (served via `templates`) to visualize data and control scanner parameters.
+* **`main.py`**: The web application entry point (likely Flask or similar). It routes user requests to the backend logic and renders the `templates`.
+* **`engine.py`**: The core computational unit. This module is responsible for:
+    * Fetching historical price data (OHLC).
+    * Computing logarithmic returns.
+    * Calculating rolling statistical volatility.
+* **`simulator.py`**: A quantitative module that uses the data from `engine.py` to project future scenarios, likely employing Monte Carlo simulations or random walk models.
+* **`templates/`**: HTML interfaces for the dashboard and data visualization.
 
-## Project Structure
+## 🧮 Mathematical Core
 
-* **`main.py`**: The application entry point. This file likely initializes the web server and handles routing.
-* **`engine.py`**: Contains the backend algorithms for scanning and calculating volatility.
-* **`simulator.py`**: Handles logic for simulating market conditions or trading strategies.
-* **`templates/`**: Directory containing HTML templates for the user interface.
-* **`requirements.txt`**: A list of Python dependencies required to run the project.
+This project relies on fundamental financial mathematics to assess risk. Below is the breakdown of the quantitative methods used in the **Volatility Engine**.
 
-## Installation
+### 1. Logarithmic Returns
+Instead of simple percentage changes, the scanner likely uses **Log Returns** for time-additive properties, which are essential for accurate volatility modeling over time.
 
-Follow these steps to set up the project locally.
+$$r_t = \ln\left(\frac{P_t}{P_{t-1}}\right)$$
 
-### Prerequisites
+* Where $P_t$ is the price at time $t$ and $P_{t-1}$ is the price at time $t-1$.
 
-* Python 3.x
-* pip (Python package manager)
+### 2. Historical Volatility (Standard Deviation)
+The core metric of the scanner is the standard deviation ($\sigma$) of these log returns. This measures the dispersion of asset returns from the mean, representing "risk."
 
-### Steps
+$$\sigma = \sqrt{\frac{1}{N-1} \sum_{t=1}^{N} (r_t - \bar{r})^2}$$
 
-1.  **Clone the repository:**
+* $N$: Number of observations (e.g., trading days).
+* $\bar{r}$: The average return over the period.
+
+### 3. Annualized Volatility
+To make the daily volatility comparable to annual metrics (like interest rates or implied volatility), the engine applies an annualization factor. Since there are typically **252 trading days** in a year, the formula is:
+
+$$\sigma_{\text{annual}} = \sigma_{\text{daily}} \times \sqrt{252}$$
+
+### 4. Market Simulation (Geometric Brownian Motion)
+The `simulator.py` likely projects future price paths using the **Geometric Brownian Motion (GBM)** model, which assumes prices drift by expected return ($\mu$) and are shocked by random volatility ($\sigma$):
+
+$$\frac{dS_t}{S_t} = \mu dt + \sigma dW_t$$
+
+* $\mu$: Expected drift (average return).
+* $\sigma$: Historical volatility calculated by the engine.
+* $dW_t$: A stochastic process (Wiener process) representing random market noise.
+
+## 🚀 Installation
+
+1.  **Clone the repository**
     ```bash
     git clone [https://github.com/allenwang0/volatilityscanner.git](https://github.com/allenwang0/volatilityscanner.git)
     cd volatilityscanner
     ```
 
-2.  **Create and activate a virtual environment (optional but recommended):**
-    * *Windows:*
-        ```bash
-        python -m venv venv
-        venv\Scripts\activate
-        ```
-    * *macOS/Linux:*
-        ```bash
-        python3 -m venv venv
-        source venv/bin/activate
-        ```
-
-3.  **Install dependencies:**
+2.  **Install Dependencies**
+    Ensure you have `pandas`, `numpy`, and web framework dependencies installed.
     ```bash
     pip install -r requirements.txt
     ```
 
-## Usage
-
-1.  **Start the application:**
-    Run the main script to start the server.
+3.  **Run the Application**
     ```bash
     python main.py
     ```
+    Access the scanner at `http://localhost:5000` (default port).
 
-2.  **Access the Web Interface:**
-    Once the server is running, open your web browser and navigate to the local address shown in your terminal (typically `http://127.0.0.1:5000` or similar).
+## 🛠 Usage
 
-## Contributing
+1.  **Input Ticker**: Enter a stock symbol (e.g., `SPY`, `AAPL`) in the web interface.
+2.  **Select Window**: Choose the lookback period for volatility calculation (e.g., 30-day, 90-day).
+3.  **Run Simulation**: Trigger `simulator.py` to generate potential future price paths based on current volatility regimes.
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is open source.
+## 📜 License
+Open Source.

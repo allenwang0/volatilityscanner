@@ -1,22 +1,20 @@
-import numpy as np
-from numba import jit
 import math
 
 
 # ---------------------------------------------------------
-# 1. Numba-Optimized Black-Scholes (The "Stanford" Part)
+# 1. Standard Black-Scholes (No Numba)
 # ---------------------------------------------------------
-@jit(nopython=True)
+# REMOVED: @jit(nopython=True)
 def standard_normal_cdf(x):
     return 0.5 * (1 + math.erf(x / math.sqrt(2.0)))
 
 
-@jit(nopython=True)
+# REMOVED: @jit(nopython=True)
 def standard_normal_pdf(x):
     return (1.0 / math.sqrt(2.0 * math.pi)) * math.exp(-0.5 * x * x)
 
 
-@jit(nopython=True)
+# REMOVED: @jit(nopython=True)
 def black_scholes_price(S, K, T, r, sigma, option_type_flag):
     # option_type_flag: 1 for Call, -1 for Put
     if T <= 0 or sigma <= 0:
@@ -32,7 +30,7 @@ def black_scholes_price(S, K, T, r, sigma, option_type_flag):
     return price
 
 
-@jit(nopython=True)
+# REMOVED: @jit(nopython=True)
 def calculate_vega(S, K, T, r, sigma):
     d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
     return S * math.sqrt(T) * standard_normal_pdf(d1)
@@ -41,7 +39,7 @@ def calculate_vega(S, K, T, r, sigma):
 # ---------------------------------------------------------
 # 2. Implied Volatility Solver (Newton-Raphson)
 # ---------------------------------------------------------
-@jit(nopython=True)
+# REMOVED: @jit(nopython=True)
 def implied_volatility(market_price, S, K, T, r, option_type_flag):
     sigma = 0.5  # Initial guess
     tol = 1e-5

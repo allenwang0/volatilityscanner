@@ -57,12 +57,15 @@
             document.getElementById('spot-price').innerText = "$" + data.spot.toFixed(2);
 
             // Update Plot
+            // Skip points where the IV solver found no volatility (null z)
+            var keep = data.z.map((z, i) => i).filter(i => data.z[i] !== null);
+            var zs = keep.map(i => data.z[i]);
             var trace = {
-                x: data.x,
-                y: data.y,
-                z: data.z,
+                x: keep.map(i => data.x[i]),
+                y: keep.map(i => data.y[i]),
+                z: zs,
                 type: 'mesh3d',
-                intensity: data.z,
+                intensity: zs,
                 colorscale: 'Viridis',
                 opacity: 0.8
             };

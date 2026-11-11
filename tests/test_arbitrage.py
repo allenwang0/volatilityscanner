@@ -1,6 +1,6 @@
 import numpy as np
 
-from engine import black_scholes_price, scan_arbitrage
+from engine import black_scholes_price, scan_arbitrage, scan_arbitrage_with_counts
 
 S, R = 5000.0, 0.05
 STRIKES = [round(k, 2) for k in np.linspace(4500, 5500, 20)]
@@ -108,3 +108,49 @@ def test_calendar_skips_over_an_expiry_with_too_few_quotes():
     r60["price"] = black_scholes_price(S, r60["strike"], 60 / 365, R, 0.04, 1)
     cal = of_type(scan_arbitrage(chain), "calendar")
     assert [(v.expiry, v.strikes) for v in cal] == [(60, [STRIKES[ATM]])]
+
+
+def with_puts(chain):
+    puts = []
+    for c in chain:
+        T = c["time_to_expiry"]
+        p = dict(c, type="put")
+        p["price"] = c["price"] - S + c["strike"] * np.exp(-R * T)
+        puts.append(p)
+    return chain + puts
+
+
+def test_parity_holds_on_a_clean_chain_with_puts():
+    assert scan_arbitrage(with_puts(clean_chain())) == []
+
+
+def test_parity_break_is_caught_once_and_compared_with_the_spread():
+    chain = with_puts(clean_chain())
+    for o in chain:
+        o["bid"], o["ask"] = o["price"] - 0.05, o["price"] + 0.05
+    put = next(o for o in chain if o["type"] == "put" and o["expiry"] == 30 and o["strike"] == STRIKES[ATM])
+    put["price"] += 0.08  # inside the two legs' combined half-spreads of 0.10
+    call = next(o for o in chain if o["type"] == "call" and o["expiry"] == 90 and o["strike"] == STRIKES[2])
+    call["price"] += 0.50  # outside them; also breaks that expiry's butterflies
+    parity = of_type(scan_arbitrage(chain), "parity")
+    assert [(v.expiry, v.strikes, v.exceeds_spread) for v in parity] == [
+        (30, [STRIKES[ATM], STRIKES[ATM]], False),
+        (90, [STRIKES[2], STRIKES[2]], True),
+    ]
+    assert abs(parity[0].size - 0.08) < 1e-9
+
+
+def test_simulated_quotes_without_bid_ask_leave_exceeds_spread_unset():
+    chain = clean_chain()
+    row(chain, 30, ATM)["price"] += 3.00
+    assert scan_arbitrage(chain)[0].exceeds_spread is None
+
+
+def test_condition_count_matches_the_checks_run():
+    # 4 expiries x (19 adjacent pairs x 2 + 18 butterflies) = 224 strike-space
+    # checks, plus 20 parity checks per expiry, plus calendar points inside
+    # the shorter expiry's k range.
+    _, n = scan_arbitrage_with_counts(with_puts(clean_chain()))
+    assert n >= 224 + 80
+    _, n_calls = scan_arbitrage_with_counts(clean_chain())
+    assert n - n_calls == 80

@@ -115,7 +115,7 @@ class Violation:
     type: str  # "monotonicity", "slope", "butterfly" or "calendar"
     expiry: float  # days
     strikes: list
-    size: float  # price units; total variance units for "calendar"
+    size: float  # price units
 
 
 def scan_arbitrage(chain, tol=ARB_TOL) -> list:
@@ -129,7 +129,7 @@ def scan_arbitrage(chain, tol=ARB_TOL) -> list:
     for opt in chain:
         by_expiry.setdefault(opt["time_to_expiry"], []).append(opt)
 
-    slices = []  # (T, days, strikes, log-forward-moneyness, total variance)
+    slices = []  # (T, days, strikes, log-forward-moneyness, total variance, quotes)
     for T in sorted(by_expiry):
         calls = sorted(by_expiry[T], key=lambda x: x["strike"])
         days = calls[0]["expiry"]
@@ -156,24 +156,31 @@ def scan_arbitrage(chain, tol=ARB_TOL) -> list:
             if -fly > tol:
                 violations.append(Violation("butterfly", days, [K[i - 1], K[i], K[i + 1]], -fly))
 
-        k, w, strikes = [], [], []
+        k, w, strikes, quotes = [], [], [], []
         for c in calls:
             iv = implied_volatility(c["price"], c["spot"], c["strike"], T, r, 1).sigma
             if not math.isnan(iv):
                 k.append(math.log(c["strike"] / (c["spot"] * math.exp(r * T))))
                 w.append(iv * iv * T)
                 strikes.append(c["strike"])
-        slices.append((T, days, strikes, k, w))
+                quotes.append(c)
+        slices.append((T, days, strikes, k, w, quotes))
 
     # Calendar: on each longer expiry's points, compare with the shorter
-    # expiry's total variance interpolated linearly in k (no extrapolation)
-    for (_, _, _, k1, w1), (_, days2, strikes2, k2, w2) in zip(slices, slices[1:]):
+    # expiry's total variance interpolated linearly in k (no extrapolation).
+    # Size is in price units: the longer call's price at the shorter expiry's
+    # total variance, less its quoted price.
+    for (_, _, _, k1, w1, _), (T2, days2, strikes2, k2, w2, quotes2) in zip(slices, slices[1:]):
         if len(k1) < 2:
             continue
-        for strike, k, w in zip(strikes2, k2, w2):
-            if k1[0] <= k <= k1[-1]:
-                drop = float(np.interp(k, k1, w1)) - w
-                if drop > tol:
-                    violations.append(Violation("calendar", days2, [strike], drop))
+        for strike, k, w, c in zip(strikes2, k2, w2, quotes2):
+            if not k1[0] <= k <= k1[-1]:
+                continue
+            w_min = float(np.interp(k, k1, w1))
+            if w_min <= w:
+                continue
+            floor = black_scholes_price(c["spot"], strike, T2, c["interest_rate"], math.sqrt(w_min / T2), 1)
+            if floor - c["price"] > tol:
+                violations.append(Violation("calendar", days2, [strike], floor - c["price"]))
 
     return violations

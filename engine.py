@@ -1,4 +1,7 @@
 import math
+from dataclasses import dataclass
+
+from scipy.optimize import brentq
 
 
 # ---------------------------------------------------------
@@ -15,55 +18,87 @@ def standard_normal_pdf(x):
 
 
 # REMOVED: @jit(nopython=True)
-def black_scholes_price(S, K, T, r, sigma, option_type_flag):
-    # option_type_flag: 1 for Call, -1 for Put
+def black_scholes_price(S, K, T, r, sigma, option_type_flag, q=0.0):
+    # option_type_flag: 1 for Call, -1 for Put; q: continuous dividend yield
     if T <= 0 or sigma <= 0:
         return max(0.0, (S - K) * option_type_flag)
 
-    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
     d2 = d1 - sigma * math.sqrt(T)
 
     if option_type_flag == 1:  # Call
-        price = S * standard_normal_cdf(d1) - K * math.exp(-r * T) * standard_normal_cdf(d2)
+        price = S * math.exp(-q * T) * standard_normal_cdf(d1) - K * math.exp(-r * T) * standard_normal_cdf(d2)
     else:  # Put
-        price = K * math.exp(-r * T) * standard_normal_cdf(-d2) - S * standard_normal_cdf(-d1)
+        price = K * math.exp(-r * T) * standard_normal_cdf(-d2) - S * math.exp(-q * T) * standard_normal_cdf(-d1)
     return price
 
 
 # REMOVED: @jit(nopython=True)
-def calculate_vega(S, K, T, r, sigma):
-    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
-    return S * math.sqrt(T) * standard_normal_pdf(d1)
+def calculate_vega(S, K, T, r, sigma, q=0.0):
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    return S * math.exp(-q * T) * math.sqrt(T) * standard_normal_pdf(d1)
 
 
 # ---------------------------------------------------------
-# 2. Implied Volatility Solver (Newton-Raphson)
+# 2. Implied Volatility Solver (bracketed Newton with Brent fallback)
 # ---------------------------------------------------------
-# REMOVED: @jit(nopython=True)
-def implied_volatility(market_price, S, K, T, r, option_type_flag):
-    sigma = 0.5  # Initial guess
-    tol = 1e-5
-    max_iter = 100
+SIGMA_LO, SIGMA_HI = 1e-4, 5.0  # search bracket for sigma
+MAX_NEWTON_ITER = 50
+SIGMA_TOL = 1e-12  # stop when a Newton step moves sigma less than this
 
-    for i in range(max_iter):
-        price = black_scholes_price(S, K, T, r, sigma, option_type_flag)
-        diff = market_price - price
 
-        if abs(diff) < tol:
-            return sigma
+@dataclass
+class IVResult:
+    sigma: float  # NaN when not converged
+    converged: bool
+    iterations: int
+    reason: str  # "ok" or why no volatility was found
 
-        vega = calculate_vega(S, K, T, r, sigma)
 
-        if vega == 0:
-            return sigma  # Prevent divide by zero, return best guess
+def implied_volatility(market_price, S, K, T, r, option_type_flag, q=0.0) -> IVResult:
+    nan = float("nan")
+    if T <= 0 or S <= 0 or K <= 0:
+        return IVResult(nan, False, 0, "invalid_input")
+    if market_price <= 0:
+        return IVResult(nan, False, 0, "zero_price")
 
-        sigma = sigma + diff / vega
+    # Static no-arbitrage bounds on a European option price
+    fwd_spot = S * math.exp(-q * T)
+    disc_strike = K * math.exp(-r * T)
+    if option_type_flag == 1:
+        lower, upper = max(0.0, fwd_spot - disc_strike), fwd_spot
+    else:
+        lower, upper = max(0.0, disc_strike - fwd_spot), disc_strike
+    if market_price <= lower:
+        return IVResult(nan, False, 0, "at_or_below_intrinsic")
+    if market_price >= upper:
+        return IVResult(nan, False, 0, "above_upper_bound")
 
-        # Clamp sigma to realistic bounds to prevent divergence
-        if sigma <= 0: sigma = 0.01
-        if sigma > 5: sigma = 5.0
+    def objective(sig):
+        return black_scholes_price(S, K, T, r, sig, option_type_flag, q) - market_price
 
-    return sigma
+    # Brenner-Subrahmanyam initial guess, clamped into the bracket
+    sigma = market_price / fwd_spot * math.sqrt(2 * math.pi / T)
+    sigma = min(max(sigma, SIGMA_LO), SIGMA_HI)
+
+    for i in range(1, MAX_NEWTON_ITER + 1):
+        vega = calculate_vega(S, K, T, r, sigma, q)
+        if vega < 1e-8 * S:
+            break
+        step = objective(sigma) / vega
+        new_sigma = sigma - step
+        if not SIGMA_LO <= new_sigma <= SIGMA_HI:
+            break
+        sigma = new_sigma
+        if abs(step) < SIGMA_TOL:
+            return IVResult(sigma, True, i, "ok")
+
+    # Newton left the bracket, stalled on a flat vega, or ran out of steps
+    if objective(SIGMA_LO) * objective(SIGMA_HI) > 0:
+        return IVResult(nan, False, 0, "outside_bracket")
+    # brentq raises if it fails to converge
+    sigma, info = brentq(objective, SIGMA_LO, SIGMA_HI, xtol=SIGMA_TOL, full_output=True)
+    return IVResult(sigma, True, info.iterations, "ok")
 
 
 # ---------------------------------------------------------

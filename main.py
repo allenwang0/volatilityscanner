@@ -40,7 +40,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     opt['time_to_expiry'],
                     opt['interest_rate'],
                     1  # Call
-                )
+                ).sigma
 
                 # Prepare data for Plotly 3D Mesh
                 x_strikes.append(opt['strike'])

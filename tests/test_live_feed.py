@@ -23,6 +23,7 @@ class FakeCalls:
 
 class FakeTicker:
     """Offline stand-in for yfinance.Ticker with one expiry a year out."""
+
     options = ["2099-01-16"]
 
     def __init__(self, symbol):
@@ -32,12 +33,16 @@ class FakeTicker:
         return {"Close": FakeColumn([500.0])}
 
     def option_chain(self, expiry):
-        return types.SimpleNamespace(calls=FakeCalls([
-            {"strike": 495.0, "bid": 10.0, "ask": 10.4},  # good quote
-            {"strike": 500.0, "bid": 0.0, "ask": 6.0},    # no bid
-            {"strike": 505.0, "bid": 3.0, "ask": 2.5},    # crossed
-            {"strike": 510.0, "bid": float("nan"), "ask": 1.0},  # missing bid
-        ]))
+        return types.SimpleNamespace(
+            calls=FakeCalls(
+                [
+                    {"strike": 495.0, "bid": 10.0, "ask": 10.4},  # good quote
+                    {"strike": 500.0, "bid": 0.0, "ask": 6.0},  # no bid
+                    {"strike": 505.0, "bid": 3.0, "ask": 2.5},  # crossed
+                    {"strike": 510.0, "bid": float("nan"), "ask": 1.0},  # missing bid
+                ]
+            )
+        )
 
 
 @pytest.fixture
@@ -45,6 +50,7 @@ def live_feed(monkeypatch):
     monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=FakeTicker))
     monkeypatch.delitem(sys.modules, "live_feed", raising=False)
     import live_feed
+
     return live_feed
 
 

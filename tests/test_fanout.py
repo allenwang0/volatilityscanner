@@ -1,4 +1,5 @@
 """Fan-out behaviour with fake sockets, so a stalled client can be simulated."""
+
 import asyncio
 import json
 

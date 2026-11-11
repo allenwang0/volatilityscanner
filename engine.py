@@ -24,19 +24,23 @@ def black_scholes_price(S, K, T, r, sigma, option_type_flag, q=0.0):
     if T <= 0 or sigma <= 0:
         return max(0.0, (S - K) * option_type_flag)
 
-    d1 = (math.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
     d2 = d1 - sigma * math.sqrt(T)
 
     if option_type_flag == 1:  # Call
-        price = S * math.exp(-q * T) * standard_normal_cdf(d1) - K * math.exp(-r * T) * standard_normal_cdf(d2)
+        price = S * math.exp(-q * T) * standard_normal_cdf(d1) - K * math.exp(-r * T) * standard_normal_cdf(
+            d2
+        )
     else:  # Put
-        price = K * math.exp(-r * T) * standard_normal_cdf(-d2) - S * math.exp(-q * T) * standard_normal_cdf(-d1)
+        price = K * math.exp(-r * T) * standard_normal_cdf(-d2) - S * math.exp(-q * T) * standard_normal_cdf(
+            -d1
+        )
     return price
 
 
 # REMOVED: @jit(nopython=True)
 def calculate_vega(S, K, T, r, sigma, q=0.0):
-    d1 = (math.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
     return S * math.exp(-q * T) * math.sqrt(T) * standard_normal_pdf(d1)
 
 
@@ -181,7 +185,7 @@ def scan_arbitrage(chain, tol=ARB_TOL) -> list:
         k1, w1 = base
         if len(k2) >= 2:
             base = (k2, w2)
-        for strike, k, w, c in zip(strikes2, k2, w2, quotes2):
+        for strike, k, w, c in zip(strikes2, k2, w2, quotes2, strict=True):
             if not k1[0] <= k <= k1[-1]:
                 continue
             w_min = float(np.interp(k, k1, w1))

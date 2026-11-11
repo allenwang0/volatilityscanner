@@ -1,7 +1,3 @@
-import math
-
-import numpy as np
-
 import simulator
 from engine import calculate_vega, implied_volatility
 from simulator import MarketSimulator

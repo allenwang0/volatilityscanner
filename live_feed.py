@@ -1,7 +1,17 @@
 import yfinance as yf
 import pandas as pd
 import time
-from datetime import datetime
+from datetime import datetime, time as clock_time
+from zoneinfo import ZoneInfo
+
+NY = ZoneInfo("America/New_York")
+MARKET_CLOSE = clock_time(16, 0)  # options stop trading at the 16:00 ET close
+
+
+def years_to_expiry(expiry_date, now):
+    """Time in years from `now` to 16:00 New York time on `expiry_date` ('YYYY-MM-DD')."""
+    expiry = datetime.combine(datetime.strptime(expiry_date, "%Y-%m-%d").date(), MARKET_CLOSE, tzinfo=NY)
+    return (expiry - now).total_seconds() / (365 * 24 * 3600)
 
 
 class LiveFeed:
@@ -32,12 +42,9 @@ class LiveFeed:
             calls = opt_chain.calls
 
             # Calculate time to expiry (T) in years
-            exp_dt = datetime.strptime(expiry_date, "%Y-%m-%d")
-            days_to_expiry = (exp_dt - datetime.now()).days
-            if days_to_expiry < 1:
-                continue  # Skip expiring today
-
-            T = days_to_expiry / 365.0
+            T = years_to_expiry(expiry_date, datetime.now(NY))
+            if T <= 0:
+                continue  # Already expired
 
             # Parse calls
             for index, row in calls.iterrows():
@@ -46,9 +53,14 @@ class LiveFeed:
                 if not (spot * 0.9 < row['strike'] < spot * 1.1):
                     continue
 
+                # Drop quotes with no bid or a crossed market; their mid is not a price.
+                # Written as "not ok" so missing (NaN) quotes are dropped too.
+                if not (row['bid'] > 0 and row['ask'] >= row['bid']):
+                    continue
+
                 options_chain.append({
                     "strike": row['strike'],
-                    "expiry": days_to_expiry,
+                    "expiry": T * 365,  # Days
                     "time_to_expiry": T,
                     "price": (row['bid'] + row['ask']) / 2,  # Midpoint price
                     "type": "call",

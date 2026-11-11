@@ -65,3 +65,14 @@ def test_put_call_parity_gives_same_iv():
     iv_call = implied_volatility(call, s, k, t, R, 1, q=q).sigma
     iv_put = implied_volatility(put, s, k, t, R, -1, q=q).sigma
     assert abs(iv_call - iv_put) < 1e-8
+
+
+def test_non_finite_inputs_are_rejected_not_raised():
+    # One NaN quote or spot (yfinance returns them) used to make brentq raise,
+    # which threw away the whole tick for every client.
+    nan = float("nan")
+    for args in [(nan, S, 5000.0, T7), (100.0, nan, 5000.0, T7), (100.0, S, 5000.0, nan),
+                 (float("inf"), S, 5000.0, T7)]:
+        res = implied_volatility(*args, R, 1)
+        assert math.isnan(res.sigma)
+        assert res.reason == "invalid_input"

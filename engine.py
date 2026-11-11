@@ -58,6 +58,8 @@ class IVResult:
 
 def implied_volatility(market_price, S, K, T, r, option_type_flag, q=0.0) -> IVResult:
     nan = float("nan")
+    if not all(math.isfinite(x) for x in (market_price, S, K, T, r, q)):
+        return IVResult(nan, False, 0, "invalid_input")
     if T <= 0 or S <= 0 or K <= 0:
         return IVResult(nan, False, 0, "invalid_input")
     if market_price <= 0:

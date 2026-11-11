@@ -43,7 +43,6 @@ class FakeTicker:
 @pytest.fixture
 def live_feed(monkeypatch):
     monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=FakeTicker))
-    monkeypatch.setitem(sys.modules, "pandas", types.ModuleType("pandas"))
     monkeypatch.delitem(sys.modules, "live_feed", raising=False)
     import live_feed
     return live_feed

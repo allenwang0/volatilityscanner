@@ -1,0 +1,33 @@
+[project]
+name = "volatilityscanner"
+version = "0.1.0"
+description = "Live implied volatility smiles and surface with a bracketed IV solver, SVI fits and static-arbitrage checks"
+requires-python = ">=3.12"
+dynamic = ["dependencies", "optional-dependencies"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["engine", "simulator", "main", "live_feed"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+optional-dependencies.live = { file = ["requirements-live.txt"] }
+optional-dependencies.dev = { file = ["requirements-dev.txt"] }
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["e2e: browser tests that start the server (need Playwright's Chromium)"]

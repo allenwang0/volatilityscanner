@@ -77,3 +77,17 @@ def test_calendar_total_variance_decrease_is_caught_once():
     assert len(cal) == 1
     assert cal[0].expiry == 60
     assert cal[0].strikes == [STRIKES[ATM]]
+
+
+def test_calendar_size_is_in_price_units_so_a_price_tolerance_applies():
+    # Every check shares one tolerance in dollars (half a tick in live mode).
+    # A calendar size in total-variance units (about 2e-4 here) would sit
+    # under a 0.005 tolerance and the violation would vanish.
+    chain = clean_chain()
+    r60 = row(chain, 60, ATM)
+    r60["price"] = black_scholes_price(S, r60["strike"], 60 / 365, R, 0.10, 1)
+    cal = of_type(scan_arbitrage(chain, tol=0.005), "calendar")
+    assert len(cal) == 1
+    # Size: how far the 60-day call sits below the cheapest price that keeps
+    # its total variance at the 30-day level at the same log-forward moneyness.
+    assert 1.0 < cal[0].size < 10.0

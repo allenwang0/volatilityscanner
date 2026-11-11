@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+import contextlib
 from contextlib import asynccontextmanager
 import asyncio
 import json
@@ -17,10 +18,12 @@ logger = logging.getLogger(__name__)
 TICK_SECONDS = 0.5  # 2 ticks per second
 
 sim = MarketSimulator()
-clients = set()  # connected WebSockets; all share one tick sequence
+# Connected WebSockets, each with a one-slot outbox. All share one tick
+# sequence; a client that falls behind skips to the newest tick.
+clients = {}
 
 
-def build_payload(raw_chain):
+def build_payload(raw_chain, tick=0):
     # 1. The "Quant" Job: Calculate IV and Surface Points
     x_strikes = []
     y_expiry = []
@@ -48,6 +51,7 @@ def build_payload(raw_chain):
     arbs = scan_arbitrage(raw_chain)
 
     return {
+        "tick": tick,
         "spot": raw_chain[0]['spot'],
         "x": x_strikes,
         "y": y_expiry,
@@ -57,20 +61,25 @@ def build_payload(raw_chain):
     }
 
 
+def publish(text):
+    """Queue text for every client without waiting on any of them."""
+    for outbox in clients.values():
+        if outbox.full():
+            outbox.get_nowait()  # drop the stale tick the client has not sent yet
+        outbox.put_nowait(text)
+
+
 async def produce_ticks():
     """Tick the simulator once per interval and send the same payload to every client."""
+    tick = 0
     while True:
+        tick += 1
         try:
-            text = json.dumps(build_payload(sim.generate_tick()), allow_nan=False)
+            text = json.dumps(build_payload(sim.generate_tick(), tick), allow_nan=False)
         except Exception:
             logger.exception("Failed to build tick payload")
         else:
-            for ws in list(clients):
-                try:
-                    await ws.send_text(text)
-                except Exception:
-                    logger.exception("Failed to send to client; dropping it")
-                    clients.discard(ws)
+            publish(text)
 
         await asyncio.sleep(TICK_SECONDS)
 
@@ -80,6 +89,8 @@ async def lifespan(app):
     producer = asyncio.create_task(produce_ticks())
     yield
     producer.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await producer
 
 
 app = FastAPI(lifespan=lifespan)
@@ -91,15 +102,34 @@ async def get(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+async def send_from(websocket, outbox):
+    while True:
+        await websocket.send_text(await outbox.get())
+
+
+async def wait_for_close(websocket):
+    # The client sends nothing; receive_text returns or raises when it leaves
+    while True:
+        await websocket.receive_text()
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    clients.add(websocket)
+    clients[websocket] = asyncio.Queue(maxsize=1)
+    tasks = [
+        asyncio.create_task(send_from(websocket, clients[websocket])),
+        asyncio.create_task(wait_for_close(websocket)),
+    ]
     try:
-        # The producer does the sending; wait here until the client leaves
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        pass
+        done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            exc = task.exception()
+            if exc is not None and not isinstance(exc, WebSocketDisconnect):
+                logger.error("WebSocket client failed; dropping it", exc_info=exc)
     finally:
-        clients.discard(websocket)
+        clients.pop(websocket, None)
+        # Not awaited: under Starlette's anyio cancel scope, awaiting here
+        # during shutdown cancels the whole session.
+        for task in tasks:
+            task.cancel()

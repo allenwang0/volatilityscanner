@@ -34,12 +34,9 @@ def produced(monkeypatch):
     return spots
 
 
-def read_spots(ws, n):
-    return [strict_loads(ws.receive_text())["spot"] for _ in range(n)]
-
-
-def is_contiguous_run(seq, of):
-    return any(of[i:i + len(seq)] == seq for i in range(len(of) - len(seq) + 1))
+def read_ticks(ws, n):
+    payloads = [strict_loads(ws.receive_text()) for _ in range(n)]
+    return {p["tick"]: p["spot"] for p in payloads}
 
 
 def test_two_clients_see_one_tick_sequence(fast_ticks, produced):
@@ -49,12 +46,15 @@ def test_two_clients_see_one_tick_sequence(fast_ticks, produced):
         with client.websocket_connect("/ws") as a:
             a.receive_text()
             with client.websocket_connect("/ws") as b:
-                spots_a = read_spots(a, 5)
-                spots_b = read_spots(b, 5)
-    assert is_contiguous_run(spots_a, produced)
-    assert is_contiguous_run(spots_b, produced)
-    shared = set(spots_a) & set(spots_b)
+                ticks_a = read_ticks(a, 8)
+                ticks_b = read_ticks(b, 8)
+    shared = set(ticks_a) & set(ticks_b)
     assert shared  # both clients saw some of the same ticks
+    for tick in shared:
+        assert ticks_a[tick] == ticks_b[tick]
+    # Tick n carries the simulator's n-th spot: one step per tick, not per client.
+    for tick, spot in {**ticks_a, **ticks_b}.items():
+        assert produced[tick - 1] == spot
 
 
 def test_tick_failure_is_logged_and_other_clients_keep_receiving(
@@ -73,10 +73,12 @@ def test_tick_failure_is_logged_and_other_clients_keep_receiving(
     with caplog.at_level(logging.ERROR):
         with TestClient(main.app) as client:
             with client.websocket_connect("/ws") as a, client.websocket_connect("/ws") as b:
-                read_spots(a, 5)
-                read_spots(b, 5)
-    assert calls["n"] >= 3
+                ticks_a = read_ticks(a, 6)
+                ticks_b = read_ticks(b, 6)
     assert any(r.exc_info and "boom" in str(r.exc_info[1]) for r in caplog.records)
+    # The producer survived the failed tick 3 and kept serving both clients.
+    assert max(ticks_a) > 3 and max(ticks_b) > 3
+    assert 3 not in ticks_a and 3 not in ticks_b
 
 
 def test_failed_iv_is_sent_as_null_with_a_reason(fast_ticks, monkeypatch):

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.optimize import brentq
+from scipy.special import ndtr
 
 # Implied volatility search bracket. 1e-4 is below any listed equity option's
 # vol; 5.0 (500%) is above it.
@@ -113,6 +114,94 @@ def implied_volatility(
 
     # Newton left the bracket, stalled on a flat vega, or ran out of steps
     return _brent(market_price, S, K, T, r, option_type_flag, q)
+
+
+def black_scholes_price_array(S, K, T, r, sigma, flag, q=0.0):
+    """Vectorized black_scholes_price for T > 0 and sigma > 0."""
+    sqrt_t = np.sqrt(T)
+    d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * sqrt_t)
+    d2 = d1 - sigma * sqrt_t
+    fwd_spot = S * np.exp(-q * T)
+    disc_strike = K * np.exp(-r * T)
+    return flag * (fwd_spot * ndtr(flag * d1) - disc_strike * ndtr(flag * d2))
+
+
+def vega_array(S, K, T, r, sigma, q=0.0):
+    d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    return S * np.exp(-q * T) * np.sqrt(T) * np.exp(-0.5 * d1 * d1) / math.sqrt(2 * math.pi)
+
+
+def _screen_array(price, S, K, T, r, flag, q) -> list[str]:
+    """_screen for arrays: the first failing check, in the same order, or ""."""
+    with np.errstate(all="ignore"):
+        finite = np.isfinite(price) & np.isfinite(S) & np.isfinite(K) & np.isfinite(T)
+        finite &= np.isfinite(r) & np.isfinite(q)
+        fwd_spot = S * np.exp(-q * T)
+        disc_strike = K * np.exp(-r * T)
+        lower = np.maximum(0.0, flag * (fwd_spot - disc_strike))
+        upper = np.where(flag == 1, fwd_spot, disc_strike)
+        checks = [
+            (~finite, "invalid_input"),
+            ((T <= 0) | (S <= 0) | (K <= 0), "invalid_input"),
+            (price <= 0, "zero_price"),
+            (price <= lower, "at_or_below_intrinsic"),
+            (price >= upper, "above_upper_bound"),
+        ]
+    reason = np.full(price.size, "", dtype=object)
+    for mask, why in reversed(checks):
+        reason[mask] = why
+    return list(reason)
+
+
+@dataclass
+class IVArrays:
+    sigma: np.ndarray  # NaN where not converged
+    iterations: np.ndarray
+    reason: list[str]
+    brent: np.ndarray  # True where Newton gave up and Brent ran
+
+
+def implied_volatility_array(price, S, K, T, r, flag, q=0.0) -> IVArrays:
+    """Same method as implied_volatility, with Newton steps taken for all quotes at once.
+
+    Quotes Newton cannot finish fall back to the scalar Brent solver one by one.
+    """
+    arrays = np.broadcast_arrays(*(np.asarray(x, dtype=float) for x in (price, S, K, T, r, flag, q)))
+    price, S, K, T, r, flag, q = (x.ravel() for x in arrays)
+    n = price.size
+    reason = _screen_array(price, S, K, T, r, flag, q)
+    active = np.array([not x for x in reason], dtype=bool)
+    sigma = np.full(n, np.nan)
+    iterations = np.zeros(n, dtype=int)
+    brent = np.zeros(n, dtype=bool)
+
+    idx = np.flatnonzero(active)
+    sig = price[idx] / (S[idx] * np.exp(-q[idx] * T[idx])) * np.sqrt(2 * math.pi / T[idx])
+    sig = np.clip(sig, SIGMA_LO, SIGMA_HI)
+    for i in range(1, MAX_NEWTON_ITER + 1):
+        if idx.size == 0:
+            break
+        s, k, t, rr, f, qq = S[idx], K[idx], T[idx], r[idx], flag[idx], q[idx]
+        vega = vega_array(s, k, t, rr, sig, qq)
+        flat = vega < FLAT_VEGA * s
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            step = (black_scholes_price_array(s, k, t, rr, sig, f, qq) - price[idx]) / vega
+        new_sig = sig - step
+        leave = flat | ~((new_sig >= SIGMA_LO) & (new_sig <= SIGMA_HI))
+        done = ~leave & (np.abs(step) < SIGMA_TOL)
+        sigma[idx[done]] = new_sig[done]
+        iterations[idx[done]] = i
+        brent[idx[leave]] = True
+        keep = ~leave & ~done
+        idx, sig = idx[keep], new_sig[keep]
+    brent[idx] = True  # ran out of Newton steps
+
+    for j in np.flatnonzero(brent):
+        res = _brent(price[j], S[j], K[j], T[j], r[j], int(flag[j]), q[j])
+        sigma[j], iterations[j], reason[j] = res.sigma, res.iterations, res.reason
+    for j in np.flatnonzero(active & ~brent):
+        reason[j] = "ok"
+    return IVArrays(sigma, iterations, reason, brent)
 
 
 @dataclass

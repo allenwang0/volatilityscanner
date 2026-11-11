@@ -1,5 +1,4 @@
 import yfinance as yf
-import pandas as pd
 import time
 from datetime import datetime, time as clock_time, timezone
 from zoneinfo import ZoneInfo

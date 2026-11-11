@@ -1,3 +1,9 @@
-pytest
-hypothesis
-httpx
+-r requirements.txt
+pytest==9.2.0
+hypothesis==6.170.15
+httpx==0.28.1
+pydantic==2.14.3
+ruff==0.17.4
+mypy==2.4.1
+playwright==1.65.0
+pytest-playwright==0.10.0

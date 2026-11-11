@@ -1,7 +1,6 @@
-fastapi
-uvicorn
-numpy
-scipy
-numba
-jinja2
-websockets
+fastapi==0.162.4
+uvicorn==0.54.0
+jinja2==3.1.6
+websockets==17.4
+numpy==2.5.4
+scipy==1.18.1

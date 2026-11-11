@@ -1,7 +1,7 @@
 import yfinance as yf
 import pandas as pd
 import time
-from datetime import datetime, time as clock_time
+from datetime import datetime, time as clock_time, timezone
 from zoneinfo import ZoneInfo
 
 NY = ZoneInfo("America/New_York")
@@ -11,7 +11,10 @@ MARKET_CLOSE = clock_time(16, 0)  # options stop trading at the 16:00 ET close
 def years_to_expiry(expiry_date, now):
     """Time in years from `now` to 16:00 New York time on `expiry_date` ('YYYY-MM-DD')."""
     expiry = datetime.combine(datetime.strptime(expiry_date, "%Y-%m-%d").date(), MARKET_CLOSE, tzinfo=NY)
-    return (expiry - now).total_seconds() / (365 * 24 * 3600)
+    # Subtract in UTC: datetimes sharing a tzinfo subtract as wall-clock times,
+    # which is an hour off across a DST change.
+    elapsed = expiry.astimezone(timezone.utc) - now.astimezone(timezone.utc)
+    return elapsed.total_seconds() / (365 * 24 * 3600)
 
 
 class LiveFeed:

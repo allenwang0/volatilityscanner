@@ -1,6 +1,7 @@
 import math
 from dataclasses import dataclass
 
+import numpy as np
 from scipy.optimize import brentq
 
 
@@ -104,26 +105,73 @@ def implied_volatility(market_price, S, K, T, r, option_type_flag, q=0.0) -> IVR
 # ---------------------------------------------------------
 # 3. Arbitrage Scanner
 # ---------------------------------------------------------
-def scan_arbitrage(df):
+ARB_TOL = 1e-6  # violations smaller than this are float noise, not arbitrage
+
+
+@dataclass
+class Violation:
+    type: str  # "monotonicity", "slope", "butterfly" or "calendar"
+    expiry: float  # days
+    strikes: list
+    size: float  # price units; total variance units for "calendar"
+
+
+def scan_arbitrage(chain, tol=ARB_TOL) -> list:
     """
-    Simple scanner to flag violations of monotonicity.
-    Call prices should generally decrease as Strike increases.
+    Static no-arbitrage checks on a call chain, one expiry at a time:
+    monotonicity and slope bounds in strike, butterfly convexity, and
+    calendar (total variance non-decreasing in T at fixed log-moneyness).
     """
-    anomalies = []
-    # Sort by strike
-    calls = sorted(df, key=lambda x: x['strike'])
+    violations = []
+    by_expiry = {}
+    for opt in chain:
+        by_expiry.setdefault(opt["time_to_expiry"], []).append(opt)
 
-    for i in range(1, len(calls)):
-        prev = calls[i - 1]
-        curr = calls[i]
+    slices = []  # (T, days, strikes, log-forward-moneyness, total variance)
+    for T in sorted(by_expiry):
+        calls = sorted(by_expiry[T], key=lambda x: x["strike"])
+        days = calls[0]["expiry"]
+        r = calls[0]["interest_rate"]
+        K = [c["strike"] for c in calls]
+        C = [c["price"] for c in calls]
 
-        # Violation: Higher Strike Call costs MORE than Lower Strike Call
-        if curr['price'] > prev['price']:
-            anomalies.append({
-                "type": "Monotonicity Violation",
-                "strike": curr['strike'],
-                "price": curr['price'],
-                "details": f"Strike {curr['strike']} > Strike {prev['strike']}"
-            })
+        for i in range(1, len(calls)):
+            dK = K[i] - K[i - 1]
+            dC = C[i] - C[i - 1]
+            # Call price must not increase with strike
+            if dC > tol:
+                violations.append(Violation("monotonicity", days, [K[i - 1], K[i]], dC))
+            # ...and must not fall faster than the discounted strike step
+            excess = -dC - math.exp(-r * T) * dK
+            if excess > tol:
+                violations.append(Violation("slope", days, [K[i - 1], K[i]], excess))
 
-    return anomalies
+        for i in range(1, len(calls) - 1):
+            # Convexity with non-uniform spacing:
+            # (K3-K2) C1 - (K3-K1) C2 + (K2-K1) C3 >= 0, scaled to one unit of K2
+            w1, w3 = K[i + 1] - K[i], K[i] - K[i - 1]
+            fly = (w1 * C[i - 1] + w3 * C[i + 1]) / (w1 + w3) - C[i]
+            if -fly > tol:
+                violations.append(Violation("butterfly", days, [K[i - 1], K[i], K[i + 1]], -fly))
+
+        k, w, strikes = [], [], []
+        for c in calls:
+            iv = implied_volatility(c["price"], c["spot"], c["strike"], T, r, 1).sigma
+            if not math.isnan(iv):
+                k.append(math.log(c["strike"] / (c["spot"] * math.exp(r * T))))
+                w.append(iv * iv * T)
+                strikes.append(c["strike"])
+        slices.append((T, days, strikes, k, w))
+
+    # Calendar: on each longer expiry's points, compare with the shorter
+    # expiry's total variance interpolated linearly in k (no extrapolation)
+    for (_, _, _, k1, w1), (_, days2, strikes2, k2, w2) in zip(slices, slices[1:]):
+        if len(k1) < 2:
+            continue
+        for strike, k, w in zip(strikes2, k2, w2):
+            if k1[0] <= k <= k1[-1]:
+                drop = float(np.interp(k, k1, w1)) - w
+                if drop > tol:
+                    violations.append(Violation("calendar", days2, [strike], drop))
+
+    return violations

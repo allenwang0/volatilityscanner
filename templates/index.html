@@ -78,7 +78,7 @@
                 data.arbs.forEach(arb => {
                     var div = document.createElement('div');
                     div.className = 'arb-alert';
-                    div.innerHTML = `<b>${arb.type}</b><br>Strike: ${arb.strike}<br>${arb.details}`;
+                    div.innerHTML = `<b>${arb.type}</b><br>Expiry: ${arb.expiry}d<br>Strikes: ${arb.strikes.join(', ')}<br>Size: ${arb.size.toFixed(4)}`;
                     arbDiv.appendChild(div);
                 });
             }

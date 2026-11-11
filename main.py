@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 import asyncio
 import json
+from dataclasses import asdict
 import numpy as np
 
 from simulator import MarketSimulator
@@ -56,7 +57,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "x": x_strikes,
                 "y": y_expiry,
                 "z": z_iv,
-                "arbs": arbs
+                "arbs": [asdict(a) for a in arbs]
             }
 
             await websocket.send_text(json.dumps(payload))

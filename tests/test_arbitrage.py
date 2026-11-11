@@ -15,11 +15,17 @@ def clean_chain():
         T = days / 365
         for K in STRIKES:
             sigma = 0.15 + 1.5 * (K / S - 1) ** 2
-            chain.append({
-                "strike": K, "expiry": days, "time_to_expiry": T,
-                "price": black_scholes_price(S, K, T, R, sigma, 1),
-                "type": "call", "spot": S, "interest_rate": R,
-            })
+            chain.append(
+                {
+                    "strike": K,
+                    "expiry": days,
+                    "time_to_expiry": T,
+                    "price": black_scholes_price(S, K, T, R, sigma, 1),
+                    "type": "call",
+                    "spot": S,
+                    "interest_rate": R,
+                }
+            )
     return chain
 
 

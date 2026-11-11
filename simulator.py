@@ -1,5 +1,5 @@
 import numpy as np
-import time
+
 from engine import black_scholes_price
 
 
@@ -23,7 +23,7 @@ class MarketSimulator:
         Returns a list of option dicts with current Market Prices.
         """
         # Random walk for Spot Price
-        self.spot_price *= (1 + np.random.normal(0, 0.0005))
+        self.spot_price *= 1 + np.random.normal(0, 0.0005)
 
         options_chain = []
 
@@ -45,14 +45,16 @@ class MarketSimulator:
                 if self.tick_size:
                     price = round(price / self.tick_size) * self.tick_size
 
-                options_chain.append({
-                    "strike": K,
-                    "expiry": round(T * 365, 1),  # Days
-                    "time_to_expiry": T,
-                    "price": price,
-                    "type": "call",
-                    "spot": self.spot_price,
-                    "interest_rate": self.r
-                })
+                options_chain.append(
+                    {
+                        "strike": K,
+                        "expiry": round(T * 365, 1),  # Days
+                        "time_to_expiry": T,
+                        "price": price,
+                        "type": "call",
+                        "spot": self.spot_price,
+                        "interest_rate": self.r,
+                    }
+                )
 
         return options_chain

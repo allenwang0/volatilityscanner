@@ -1,6 +1,7 @@
 import math
 
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from engine import black_scholes_price, calculate_vega, implied_volatility
 
@@ -71,8 +72,12 @@ def test_non_finite_inputs_are_rejected_not_raised():
     # One NaN quote or spot (yfinance returns them) used to make brentq raise,
     # which threw away the whole tick for every client.
     nan = float("nan")
-    for args in [(nan, S, 5000.0, T7), (100.0, nan, 5000.0, T7), (100.0, S, 5000.0, nan),
-                 (float("inf"), S, 5000.0, T7)]:
+    for args in [
+        (nan, S, 5000.0, T7),
+        (100.0, nan, 5000.0, T7),
+        (100.0, S, 5000.0, nan),
+        (float("inf"), S, 5000.0, T7),
+    ]:
         res = implied_volatility(*args, R, 1)
         assert math.isnan(res.sigma)
         assert res.reason == "invalid_input"

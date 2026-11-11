@@ -1,17 +1,17 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-import contextlib
-from contextlib import asynccontextmanager
 import asyncio
+import contextlib
 import json
 import logging
 import math
+from contextlib import asynccontextmanager
 from dataclasses import asdict
-import numpy as np
 
-from simulator import MarketSimulator
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+
 from engine import implied_volatility, scan_arbitrage
+from simulator import MarketSimulator
 
 logger = logging.getLogger(__name__)
 
@@ -33,17 +33,17 @@ def build_payload(raw_chain, tick=0):
     for opt in raw_chain:
         # Reverse engineer the IV from the price
         result = implied_volatility(
-            opt['price'],
-            opt['spot'],
-            opt['strike'],
-            opt['time_to_expiry'],
-            opt['interest_rate'],
-            1  # Call
+            opt["price"],
+            opt["spot"],
+            opt["strike"],
+            opt["time_to_expiry"],
+            opt["interest_rate"],
+            1,  # Call
         )
 
         # Prepare data for Plotly 3D Mesh; JSON has no NaN, so failures are null
-        x_strikes.append(opt['strike'])
-        y_expiry.append(opt['expiry'])
+        x_strikes.append(opt["strike"])
+        y_expiry.append(opt["expiry"])
         z_iv.append(None if math.isnan(result.sigma) else result.sigma)
         reasons.append(result.reason)
 
@@ -52,12 +52,12 @@ def build_payload(raw_chain, tick=0):
 
     return {
         "tick": tick,
-        "spot": raw_chain[0]['spot'],
+        "spot": raw_chain[0]["spot"],
         "x": x_strikes,
         "y": y_expiry,
         "z": z_iv,
         "reasons": reasons,
-        "arbs": [asdict(a) for a in arbs]
+        "arbs": [asdict(a) for a in arbs],
     }
 
 

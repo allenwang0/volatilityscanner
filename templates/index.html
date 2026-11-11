@@ -32,7 +32,8 @@
     </div>
 
     <script>
-        var ws = new WebSocket("ws://" + location.host + "/ws");
+        var scheme = location.protocol === "https:" ? "wss://" : "ws://";
+        var ws = new WebSocket(scheme + location.host + "/ws");
         var plotDiv = document.getElementById('plot-container');
 
         var layout = {

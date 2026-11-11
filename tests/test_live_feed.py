@@ -66,3 +66,17 @@ def test_quotes_without_a_bid_or_crossed_are_dropped(live_feed):
     chain = live_feed.LiveFeed().generate_tick()
     assert [o["strike"] for o in chain] == [495.0]
     assert chain[0]["price"] == pytest.approx(10.2)
+
+
+def test_expiry_across_the_dst_change_counts_real_elapsed_hours(live_feed):
+    # Clocks fall back on 2026-11-01. Friday 10:00 EDT to Monday 16:00 EST is
+    # 79 hours of real time; subtracting two NY-zoned datetimes directly
+    # gives the 78-hour wall-clock difference.
+    now = datetime(2026, 10, 30, 10, 0, tzinfo=NY)
+    assert live_feed.years_to_expiry("2026-11-02", now) == pytest.approx(79 / 24 / 365, abs=1e-12)
+
+
+def test_after_the_close_on_expiry_day_time_is_negative(live_feed):
+    # generate_tick skips expiries with T <= 0, so a finished expiry is dropped.
+    now = datetime(2026, 11, 9, 16, 30, tzinfo=NY)
+    assert live_feed.years_to_expiry("2026-11-09", now) < 0

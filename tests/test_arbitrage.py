@@ -91,3 +91,14 @@ def test_calendar_size_is_in_price_units_so_a_price_tolerance_applies():
     # Size: how far the 60-day call sits below the cheapest price that keeps
     # its total variance at the 30-day level at the same log-forward moneyness.
     assert 1.0 < cal[0].size < 10.0
+
+
+def test_calendar_skips_over_an_expiry_with_too_few_quotes():
+    # With one quote, the 30-day slice cannot be interpolated. The 60-day
+    # slice must then be checked against the 7-day one, not left unchecked.
+    chain = [o for o in clean_chain() if o["expiry"] != 30 or o["strike"] == STRIKES[ATM]]
+    r60 = next(o for o in chain if o["expiry"] == 60 and o["strike"] == STRIKES[ATM])
+    # sigma 0.04 at 60 days: w = 0.0016 * 60/365 < 7-day ATM w = 0.15^2 * 7/365
+    r60["price"] = black_scholes_price(S, r60["strike"], 60 / 365, R, 0.04, 1)
+    cal = of_type(scan_arbitrage(chain), "calendar")
+    assert [(v.expiry, v.strikes) for v in cal] == [(60, [STRIKES[ATM]])]

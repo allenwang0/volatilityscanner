@@ -170,9 +170,17 @@ def scan_arbitrage(chain, tol=ARB_TOL) -> list:
     # expiry's total variance interpolated linearly in k (no extrapolation).
     # Size is in price units: the longer call's price at the shorter expiry's
     # total variance, less its quoted price.
-    for (_, _, _, k1, w1, _), (T2, days2, strikes2, k2, w2, quotes2) in zip(slices, slices[1:]):
-        if len(k1) < 2:
+    # An expiry with fewer than two solved quotes cannot be interpolated, so
+    # later expiries are compared with the last one that can.
+    base = None
+    for T2, days2, strikes2, k2, w2, quotes2 in slices:
+        if base is None:
+            if len(k2) >= 2:
+                base = (k2, w2)
             continue
+        k1, w1 = base
+        if len(k2) >= 2:
+            base = (k2, w2)
         for strike, k, w, c in zip(strikes2, k2, w2, quotes2):
             if not k1[0] <= k <= k1[-1]:
                 continue

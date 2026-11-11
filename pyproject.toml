@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "volatilityscanner"
+version = "0.2.0"
+description = "Implied volatility smiles, SVI fits and static-arbitrage checks on a streamed option chain."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.162.4",
+    "uvicorn==0.54.0",
+    "websockets==17.4",
+    "jinja2==3.1.6",
+    "numpy==2.5.4",
+    "scipy==1.18.1",
+]
+
+[project.optional-dependencies]
+live = [
+    "yfinance==1.8.0",
+    "pandas==3.1.1",
+    "tzdata==2026.6",
+]
+dev = [
+    "pytest==9.2.0",
+    "hypothesis==6.170.15",
+    "httpx==0.28.1",
+    "jsonschema==4.26.0",
+    "pydantic==2.14.3",
+    "ruff==0.17.4",
+    "mypy==2.4.1",
+    "playwright==1.65.0",
+    "pytest-playwright==0.10.0",
+]
+
+[tool.setuptools]
+py-modules = ["engine", "simulator", "main", "live_feed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "NPY"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["e2e: browser tests that start a uvicorn server (run with -m e2e)"]
+addopts = "-m 'not e2e'"

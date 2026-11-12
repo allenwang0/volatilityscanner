@@ -37,7 +37,7 @@ dev = [
 ]
 
 [tool.setuptools]
-py-modules = ["engine", "arbitrage", "svi", "surface", "simulator", "main", "live_feed"]
+py-modules = ["engine", "arbitrage", "svi", "surface", "simulator", "main", "live_feed", "report"]
 
 [tool.ruff]
 line-length = 100

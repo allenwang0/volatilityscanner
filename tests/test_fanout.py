@@ -1,6 +1,7 @@
 """Fan-out behaviour with fake sockets, so a stalled client can be simulated."""
 
 import asyncio
+import concurrent.futures
 import json
 
 import pytest
@@ -30,6 +31,13 @@ class FakeSocket:
         if self.stall_first_send and not self.sent and not self.release.is_set():
             await self.release.wait()  # network buffer full
         self.sent.append(json.loads(text)["tick"])
+
+
+def run_in_own_loop(scenario):
+    """asyncio.run in a worker thread: Playwright's sync API leaves an event
+    loop running on the main thread when the browser tests run first."""
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        return pool.submit(asyncio.run, scenario()).result()
 
 
 async def run_with(sockets, seconds):
@@ -69,7 +77,7 @@ def test_stalled_client_does_not_hold_up_others():
         await stop(producer, endpoints, [slow, fast])
         return fast_count, latest, slow.sent
 
-    fast_count, latest, slow_sent = asyncio.run(scenario())
+    fast_count, latest, slow_sent = run_in_own_loop(scenario)
     assert fast_count >= 10
     # The stalled client gets the newest tick next, not a backlog of stale
     # ones: at most one tick waits per client, so memory stays bounded.
@@ -87,7 +95,7 @@ def test_client_that_disconnects_mid_send_is_dropped():
         await stop(producer, endpoints, [gone, ok])
         return gone_finished, registered, ok.sent
 
-    gone_finished, registered, ok_sent = asyncio.run(scenario())
+    gone_finished, registered, ok_sent = run_in_own_loop(scenario)
     assert gone_finished and not registered
     assert len(ok_sent) >= 5
     assert not main.clients

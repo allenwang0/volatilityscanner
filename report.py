@@ -281,7 +281,7 @@ analysis twice a second.</p>
     <h2>IV solver round trip</h2>
     <p class="takeaway" id="rt-takeaway">{rt["identifiable"]:,} of {ROUND_TRIP_CONTRACTS:,} random
     contracts have vega above 1e-4 S; max error {rt["max_error"]:.1e}, median {rt["median_error"]:.1e},
-    {rt["unsolved_identifiable"]} unsolved.</p>
+    {rt["unsolved_identifiable"]} unsolved. Exact recoveries (error 0) are drawn at -17.</p>
     <div id="hist" class="chart small"></div>
   </section>
   <section class="panel">

@@ -1,3 +1,4 @@
+import math
 import sys
 import types
 from datetime import datetime
@@ -32,18 +33,22 @@ class FakeTicker:
         return {"Close": FakeColumn([500.0])}
 
     def option_chain(self, expiry):
-        return types.SimpleNamespace(calls=FakeCalls([
-            {"strike": 495.0, "bid": 10.0, "ask": 10.4},  # good quote
-            {"strike": 500.0, "bid": 0.0, "ask": 6.0},    # no bid
-            {"strike": 505.0, "bid": 3.0, "ask": 2.5},    # crossed
-            {"strike": 510.0, "bid": float("nan"), "ask": 1.0},  # missing bid
-        ]))
+        return types.SimpleNamespace(
+            calls=FakeCalls(
+                [
+                    {"strike": 495.0, "bid": 10.0, "ask": 10.4},  # good quote
+                    {"strike": 500.0, "bid": 0.0, "ask": 6.0},  # no bid
+                    {"strike": 505.0, "bid": 3.0, "ask": 2.5},  # crossed
+                    {"strike": 510.0, "bid": float("nan"), "ask": 1.0},  # missing bid
+                ]
+            ),
+            puts=FakeCalls([{"strike": 495.0, "bid": 4.0, "ask": 4.2}]),
+        )
 
 
 @pytest.fixture
 def live_feed(monkeypatch):
     monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=FakeTicker))
-    monkeypatch.setitem(sys.modules, "pandas", types.ModuleType("pandas"))
     monkeypatch.delitem(sys.modules, "live_feed", raising=False)
     import live_feed
     return live_feed
@@ -63,9 +68,22 @@ def test_same_day_expiry_counts_hours_to_the_close(live_feed):
 
 def test_quotes_without_a_bid_or_crossed_are_dropped(live_feed):
     # A zero bid makes the mid half the ask, which is not a price anyone traded.
-    chain = live_feed.LiveFeed().generate_tick()
-    assert [o["strike"] for o in chain] == [495.0]
-    assert chain[0]["price"] == pytest.approx(10.2)
+    chain = live_feed.LiveFeed().generate_tick(now=datetime(2026, 11, 9, 10, 0, tzinfo=NY))
+    calls = chain.flag == 1
+    assert chain.strike[calls].tolist() == [495.0]
+    assert chain.price[calls][0] == pytest.approx(10.2)
+    assert chain.bid[calls][0] == 10.0 and chain.ask[calls][0] == 10.4
+
+
+def test_forward_comes_from_put_call_parity_not_spot(live_feed):
+    # F = K + e^{rT}(C - P) at the strike nearest spot with both legs quoted.
+    now = datetime(2026, 11, 9, 10, 0, tzinfo=NY)
+    feed = live_feed.LiveFeed(rate=0.04)
+    chain = feed.generate_tick(now=now)
+    T = live_feed.years_to_expiry("2099-01-16", now)
+    expected = 495.0 + math.exp(0.04 * T) * (10.2 - 4.1)
+    assert chain.forward[0] == pytest.approx(expected)
+    assert chain.r == 0.04
 
 
 def test_expiry_across_the_dst_change_counts_real_elapsed_hours(live_feed):

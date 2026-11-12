@@ -1,3 +1,6 @@
+"""Real option chains from Yahoo Finance via yfinance (opt-in live mode)."""
+
+import math
 from datetime import UTC, datetime
 from datetime import time as clock_time
 from zoneinfo import ZoneInfo
@@ -17,60 +20,83 @@ def years_to_expiry(expiry_date, now):
     return elapsed.total_seconds() / (365 * 24 * 3600)
 
 
+MONEYNESS_BAND = 0.10  # keep strikes within 10% of spot; far wings are mostly stale quotes
+MAX_EXPIRIES = 3  # each expiry is one HTTP request of about a second
+DEFAULT_RATE = 0.05  # placeholder; pass --rate with the current 3-month T-bill yield
+
+
+def _good(row) -> bool:
+    # Drop quotes with no bid or a crossed market; their mid is not a price.
+    # Written as "not ok" so missing (NaN) quotes are dropped too.
+    return bool(row["bid"] > 0 and row["ask"] >= row["bid"])
+
+
+def implied_carry(spot, rate, T, calls: dict, puts: dict) -> float | None:
+    """Dividend yield q implied by put-call parity at the strike nearest spot.
+
+    F = K + e^{rT} (C - P), and q = r - ln(F / S) / T.
+    """
+    common = [k for k in calls if k in puts]
+    if not common:
+        return None
+    K = min(common, key=lambda k: abs(k - spot))
+    forward = K + math.exp(rate * T) * (calls[K] - puts[K])
+    if forward <= 0:
+        return None
+    return rate - math.log(forward / spot) / T
+
+
 class LiveFeed:
-    def __init__(self):
-        self.ticker_symbol = "SPY"
-        self.ticker = yf.Ticker(self.ticker_symbol)
+    def __init__(self, symbol="SPY", rate=DEFAULT_RATE):
+        self.symbol = symbol
+        self.rate = rate
+        self.ticker = yf.Ticker(symbol)
+        self.fetched_at = None
+
+    def describe(self) -> dict:
+        return {"kind": "yfinance", "symbol": self.symbol, "rate": self.rate, "fetched_at": self.fetched_at}
 
     def get_spot_price(self):
-        # Fast fetch of current price
-        data = self.ticker.history(period="1d")
-        return data["Close"].iloc[-1]
+        return float(self.ticker.history(period="1d")["Close"].iloc[-1])
 
-    def generate_tick(self):
-        """
-        Fetches REAL option chain from Yahoo Finance.
-        Note: This can take 2-3 seconds to download.
-        """
+    def generate_tick(self) -> list[dict]:
+        """Download calls and puts for the nearest expiries (takes a few seconds)."""
         spot = self.get_spot_price()
-        options_chain = []
-
-        # Get expiration dates (Yahoo returns 'YYYY-MM-DD')
-        # We only take the first 3 expirations to keep it fast
-        expirations = self.ticker.options[:3]
-
-        for expiry_date in expirations:
-            # Fetch the chain for this specific date
-            opt_chain = self.ticker.option_chain(expiry_date)
-            calls = opt_chain.calls
-
-            # Calculate time to expiry (T) in years
-            T = years_to_expiry(expiry_date, datetime.now(NY))
+        now = datetime.now(UTC)
+        chain = []
+        for expiry_date in self.ticker.options[:MAX_EXPIRIES]:
+            T = years_to_expiry(expiry_date, now)
             if T <= 0:
-                continue  # Already expired
-
-            # Parse calls
-            for _, row in calls.iterrows():
-                # Filter for reasonable moneyness to reduce data load
-                # (Only keep strikes within 10% of spot price)
-                if not (spot * 0.9 < row["strike"] < spot * 1.1):
-                    continue
-
-                # Drop quotes with no bid or a crossed market; their mid is not a price.
-                # Written as "not ok" so missing (NaN) quotes are dropped too.
-                if not (row["bid"] > 0 and row["ask"] >= row["bid"]):
-                    continue
-
-                options_chain.append(
-                    {
-                        "strike": row["strike"],
-                        "expiry": T * 365,  # Days
-                        "time_to_expiry": T,
-                        "price": (row["bid"] + row["ask"]) / 2,  # Midpoint price
-                        "type": "call",
-                        "spot": spot,
-                        "interest_rate": 0.05,  # Hardcoded risk-free rate (approx 5%)
-                    }
-                )
-
-        return options_chain
+                continue  # already expired
+            tables = self.ticker.option_chain(expiry_date)
+            legs = {}
+            for kind, table in (("call", tables.calls), ("put", tables.puts)):
+                legs[kind] = {
+                    float(row["strike"]): row
+                    for _, row in table.iterrows()
+                    if abs(row["strike"] / spot - 1) < MONEYNESS_BAND and _good(row)
+                }
+            mids = {
+                kind: {k: (r["bid"] + r["ask"]) / 2 for k, r in rows.items()} for kind, rows in legs.items()
+            }
+            q = implied_carry(spot, self.rate, T, mids["call"], mids["put"])
+            if q is None:
+                continue  # no forward without a call and put at a common strike
+            for kind, rows in legs.items():
+                for K, row in rows.items():
+                    chain.append(
+                        {
+                            "strike": K,
+                            "expiry": T * 365,  # days
+                            "time_to_expiry": T,
+                            "price": mids[kind][K],
+                            "bid": float(row["bid"]),
+                            "ask": float(row["ask"]),
+                            "type": kind,
+                            "spot": spot,
+                            "interest_rate": self.rate,
+                            "dividend_yield": q,
+                        }
+                    )
+        self.fetched_at = now.isoformat(timespec="seconds")
+        return chain

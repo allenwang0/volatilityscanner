@@ -251,7 +251,8 @@
   function sourceLabel(src) {
     if (!src) return "";
     if (src.kind === "simulated") return "Simulated, seed " + src.seed + ", IV jitter " + src.jitter;
-    return "yfinance " + src.symbol + (src.quote_time ? ", quotes as of " + src.quote_time : "");
+    return "yfinance " + src.symbol + (src.fetched_at ? ", fetched " + src.fetched_at : "") +
+      ", rate " + pct(src.rate, 2);
   }
 
   function renderHeader(p) {

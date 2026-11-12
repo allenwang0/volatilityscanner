@@ -21,6 +21,8 @@ from simulator import DEFAULT_JITTER, MarketSimulator
 logger = logging.getLogger(__name__)
 
 TICK_SECONDS = 0.5  # simulated mode: 2 ticks per second
+LIVE_REFRESH_SECONDS = 30  # yfinance takes 2 to 3 s per chain and its quotes are delayed
+LIVE_ARB_TOL = 0.005  # half of a $0.01 tick: smaller gaps are rounding in the quotes
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 source = MarketSimulator()
@@ -53,9 +55,10 @@ def publish(text):
 def make_tick(tick):
     """Fetch a chain and build its payload text; None when the chain has not changed."""
     chain = source.generate_tick()
-    if chain == state["last_chain"]:
-        return None  # live quotes refresh slower than we poll
-    state["last_chain"] = chain
+    key = [(o["type"], o["strike"], round(o["expiry"]), o["price"]) for o in chain]
+    if key == state["last_chain"]:
+        return None  # live quotes did not change since the last fetch
+    state["last_chain"] = key
     payload = build_payload(chain, tick)
     text = json.dumps(payload, allow_nan=False)
     state["latest"] = payload

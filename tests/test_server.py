@@ -27,7 +27,7 @@ def produced(monkeypatch):
 
     def recording_tick():
         chain = original()
-        spots.append(chain[0]["spot"])
+        spots.append(chain.spot)
         return chain
 
     monkeypatch.setattr(main.sim, "generate_tick", recording_tick)
@@ -86,13 +86,13 @@ def test_failed_iv_is_sent_as_null_with_a_reason(fast_ticks, monkeypatch):
 
     def tick_with_zero_quote():
         chain = original()
-        chain[-1]["price"] = 0.0  # deep OTM 90-day call quoted at zero
+        chain.price[-1] = 0.0  # deep OTM 90-day call quoted at zero
         return chain
 
     monkeypatch.setattr(main.sim, "generate_tick", tick_with_zero_quote)
     with TestClient(main.app) as client:
         with client.websocket_connect("/ws") as ws:
             payload = strict_loads(ws.receive_text())
-    assert payload["z"][-1] is None
-    assert payload["reasons"][-1] == "zero_price"
-    assert len(payload["reasons"]) == len(payload["z"])
+    assert payload["iv"][-1] is None
+    assert payload["reason"][-1] == "zero_price"
+    assert len(payload["reason"]) == len(payload["iv"])

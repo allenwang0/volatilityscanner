@@ -171,14 +171,17 @@
   function takeaways(p) {
     if (!p.slices.length) return { smile: "No expiry had enough solved quotes to fit.", term: "", skew: "" };
     var m = nearest(p.slices, 30), first = p.slices[0], last = p.slices[p.slices.length - 1];
-    var widest = p.slices.reduce(function (a, b) { return b.skew_25d > a.skew_25d ? b : a; });
+    var withSkew = p.slices.filter(function (s) { return s.skew_25d !== null; });
+    var widest = withSkew.length ? withSkew.reduce(function (a, b) { return b.skew_25d > a.skew_25d ? b : a; }) : null;
+    var mSkew = m.skew_25d === null ? "n/a (25-delta strike outside the quotes)" : m.skew_25d.toFixed(1) + " vol points";
     var failed = failedQuotes(p).length;
     return {
-      smile: label(m.days) + " 25-delta skew: " + m.skew_25d.toFixed(1) + " vol points; SVI fit RMSE " +
+      smile: label(m.days) + " 25-delta skew: " + mSkew + "; SVI fit RMSE " +
         m.rmse_vol_points.toFixed(2) + " vol points" + (failed ? "; " + failed + " quote(s) without an IV." : "."),
       term: "ATM IV goes from " + pct(first.atm_iv) + " at " + first.days + " days to " + pct(last.atm_iv) +
         " at " + last.days + " days.",
-      skew: "25-delta skew is widest at " + widest.days + " days: " + widest.skew_25d.toFixed(1) + " vol points.",
+      skew: widest ? "25-delta skew is widest at " + widest.days + " days: " + widest.skew_25d.toFixed(1) +
+        " vol points." : "No expiry quotes both 25-delta strikes.",
       surface: "Fitted surface over k from " + p.surface.k[0].toFixed(3) + " to " +
         p.surface.k[p.surface.k.length - 1].toFixed(3) + " across " + p.slices.length + " expiries.",
     };

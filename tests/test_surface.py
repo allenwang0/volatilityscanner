@@ -1,8 +1,11 @@
+import math
+
 import numpy as np
 import pytest
 
 from engine import implied_volatility_vec
 from simulator import MarketSimulator
+from svi import SVIParams
 from surface import fit_surface, fitted_calendar_crossings, skew_25_delta, surface_grid
 
 
@@ -22,7 +25,8 @@ def test_one_fit_per_expiry_that_matches_the_generating_surface(noiseless):
         assert s.fit.rmse_vol_points < 0.05
         true_atm = truth[s.days].implied_vol(np.array([0.0]), s.T)[0]
         assert s.atm_iv == pytest.approx(true_atm, abs=1e-3)
-        assert s.skew_25d == pytest.approx(skew_25_delta(truth[s.days], s.T), abs=0.05)
+        expected = skew_25_delta(truth[s.days], s.T, s.k_min, s.k_max)
+        assert s.skew_25d == pytest.approx(expected, abs=0.05)
 
 
 def test_term_structure_rises_and_skew_favours_puts(noiseless):
@@ -38,3 +42,14 @@ def test_surface_grid_has_one_row_per_expiry(noiseless):
     grid = surface_grid(slices)
     assert len(grid["iv"]) == len(slices) == len(grid["days"])
     assert all(len(row) == len(grid["k"]) for row in grid["iv"])
+
+
+def test_skew_survives_a_wild_fit_and_is_nan_when_quotes_miss_25_delta():
+    # The 90-day fit seen at IV noise sd 0.002 (seed 7): its call delta never reaches 0.25
+    # on [-3, 3], which raised inside brentq and dropped the whole tick. The search now
+    # stays inside the quoted strikes.
+    wild = SVIParams(a=-0.04159, b=0.90544, rho=0.88201, m=0.26819, s=0.10899)
+    assert math.isfinite(skew_25_delta(wild, 90 / 365, -0.13, 0.08))
+    calm = SVIParams.from_atm(30 / 365, 0.145, 0.0287, -0.65, 0.01, 0.04)
+    assert math.isfinite(skew_25_delta(calm, 30 / 365, -0.12, 0.09))
+    assert math.isnan(skew_25_delta(calm, 30 / 365, -0.01, 0.01))

@@ -11,7 +11,8 @@ from dataclasses import asdict
 import numpy as np
 
 from simulator import MarketSimulator
-from engine import implied_volatility, scan_arbitrage
+from arbitrage import check_static_arbitrage
+from engine import CALL, implied_volatility
 
 logger = logging.getLogger(__name__)
 
@@ -23,41 +24,31 @@ sim = MarketSimulator()
 clients = {}
 
 
-def build_payload(raw_chain, tick=0):
-    # 1. The "Quant" Job: Calculate IV and Surface Points
-    x_strikes = []
-    y_expiry = []
-    z_iv = []
-    reasons = []
+def finite_or_none(values):
+    """JSON has no NaN and the browser's JSON.parse rejects it, so failures become null."""
+    return [float(v) if math.isfinite(v) else None for v in values]
 
-    for opt in raw_chain:
-        # Reverse engineer the IV from the price
-        result = implied_volatility(
-            opt['price'],
-            opt['spot'],
-            opt['strike'],
-            opt['time_to_expiry'],
-            opt['interest_rate'],
-            1  # Call
-        )
 
-        # Prepare data for Plotly 3D Mesh; JSON has no NaN, so failures are null
-        x_strikes.append(opt['strike'])
-        y_expiry.append(opt['expiry'])
-        z_iv.append(None if math.isnan(result.sigma) else result.sigma)
-        reasons.append(result.reason)
-
-    # 2. Run Arb Scanner
-    arbs = scan_arbitrage(raw_chain)
-
+def build_payload(chain, tick=0):
+    results = [
+        implied_volatility(p, chain.spot, K, T, chain.r, int(f), q=chain.q)
+        for p, K, T, f in zip(chain.price, chain.strike, chain.T, chain.flag, strict=True)
+    ]
+    iv = np.array([res.sigma for res in results])
+    scan = check_static_arbitrage(chain, iv)
     return {
         "tick": tick,
-        "spot": raw_chain[0]['spot'],
-        "x": x_strikes,
-        "y": y_expiry,
-        "z": z_iv,
-        "reasons": reasons,
-        "arbs": [asdict(a) for a in arbs]
+        "spot": chain.spot,
+        "strike": chain.strike.tolist(),
+        "expiry_days": chain.expiry_days.tolist(),
+        "type": ["call" if f == CALL else "put" for f in chain.flag],
+        "price": finite_or_none(chain.price),
+        "iv": finite_or_none(iv),
+        "reason": [res.reason for res in results],
+        "iterations": [res.iterations for res in results],
+        "violations": [asdict(v) for v in scan.violations],
+        "conditions_checked": scan.conditions_checked,
+        "quotes_checked": scan.quotes_checked,
     }
 
 

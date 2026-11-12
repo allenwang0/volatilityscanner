@@ -59,11 +59,11 @@
 
             // Update Plot
             // Skip points where the IV solver found no volatility (null z)
-            var keep = data.z.map((z, i) => i).filter(i => data.z[i] !== null);
-            var zs = keep.map(i => data.z[i]);
+            var keep = data.iv.map((z, i) => i).filter(i => data.iv[i] !== null);
+            var zs = keep.map(i => data.iv[i]);
             var trace = {
-                x: keep.map(i => data.x[i]),
-                y: keep.map(i => data.y[i]),
+                x: keep.map(i => data.strike[i]),
+                y: keep.map(i => data.expiry_days[i]),
                 z: zs,
                 type: 'mesh3d',
                 intensity: zs,
@@ -76,13 +76,13 @@
             // Update Arb Feed
             var arbDiv = document.getElementById('arb-feed');
             arbDiv.innerHTML = ""; // Clear old
-            if (data.arbs.length === 0) {
+            if (data.violations.length === 0) {
                 arbDiv.innerHTML = "<div style='color:#666'>No anomalies detected.</div>";
             } else {
-                data.arbs.forEach(arb => {
+                data.violations.forEach(arb => {
                     var div = document.createElement('div');
                     div.className = 'arb-alert';
-                    div.innerHTML = `<b>${arb.type}</b><br>Expiry: ${arb.expiry}d<br>Strikes: ${arb.strikes.join(', ')}<br>Size: ${arb.size.toFixed(4)}`;
+                    div.innerHTML = `<b>${arb.type}</b><br>Expiry: ${arb.expiry_days}d<br>Strikes: ${arb.strikes.join(', ')}<br>Size: ${arb.size.toFixed(4)}`;
                     arbDiv.appendChild(div);
                 });
             }

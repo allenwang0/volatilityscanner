@@ -4,6 +4,9 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.optimize import brentq
 
+CALL = 1
+PUT = -1
+
 
 # ---------------------------------------------------------
 # 1. Standard Black-Scholes (No Numba)
@@ -40,12 +43,33 @@ def calculate_vega(S, K, T, r, sigma, q=0.0):
     return S * math.exp(-q * T) * math.sqrt(T) * standard_normal_pdf(d1)
 
 
-# ---------------------------------------------------------
-# 2. Implied Volatility Solver (bracketed Newton with Brent fallback)
-# ---------------------------------------------------------
 SIGMA_LO, SIGMA_HI = 1e-4, 5.0  # search bracket for sigma
 MAX_NEWTON_ITER = 50
 SIGMA_TOL = 1e-12  # stop when a Newton step moves sigma less than this
+
+
+@dataclass
+class Chain:
+    """One snapshot of an option chain as parallel arrays, one entry per quote.
+
+    price is the mid used for IV; bid and ask are NaN when the source has no quotes.
+    forward is the forward price for each quote's expiry.
+    """
+
+    spot: float
+    r: float
+    q: float
+    expiry_days: np.ndarray
+    T: np.ndarray
+    strike: np.ndarray
+    flag: np.ndarray
+    price: np.ndarray
+    forward: np.ndarray
+    bid: np.ndarray
+    ask: np.ndarray
+
+    def __len__(self) -> int:
+        return len(self.price)
 
 
 @dataclass
@@ -102,93 +126,3 @@ def implied_volatility(market_price, S, K, T, r, option_type_flag, q=0.0) -> IVR
     # brentq raises if it fails to converge
     sigma, info = brentq(objective, SIGMA_LO, SIGMA_HI, xtol=SIGMA_TOL, full_output=True)
     return IVResult(sigma, True, info.iterations, "ok")
-
-
-# ---------------------------------------------------------
-# 3. Arbitrage Scanner
-# ---------------------------------------------------------
-ARB_TOL = 1e-6  # violations smaller than this are float noise, not arbitrage
-
-
-@dataclass
-class Violation:
-    type: str  # "monotonicity", "slope", "butterfly" or "calendar"
-    expiry: float  # days
-    strikes: list
-    size: float  # price units
-
-
-def scan_arbitrage(chain, tol=ARB_TOL) -> list:
-    """
-    Static no-arbitrage checks on a call chain, one expiry at a time:
-    monotonicity and slope bounds in strike, butterfly convexity, and
-    calendar (total variance non-decreasing in T at fixed log-moneyness).
-    """
-    violations = []
-    by_expiry = {}
-    for opt in chain:
-        by_expiry.setdefault(opt["time_to_expiry"], []).append(opt)
-
-    slices = []  # (T, days, strikes, log-forward-moneyness, total variance, quotes)
-    for T in sorted(by_expiry):
-        calls = sorted(by_expiry[T], key=lambda x: x["strike"])
-        days = calls[0]["expiry"]
-        r = calls[0]["interest_rate"]
-        K = [c["strike"] for c in calls]
-        C = [c["price"] for c in calls]
-
-        for i in range(1, len(calls)):
-            dK = K[i] - K[i - 1]
-            dC = C[i] - C[i - 1]
-            # Call price must not increase with strike
-            if dC > tol:
-                violations.append(Violation("monotonicity", days, [K[i - 1], K[i]], dC))
-            # ...and must not fall faster than the discounted strike step
-            excess = -dC - math.exp(-r * T) * dK
-            if excess > tol:
-                violations.append(Violation("slope", days, [K[i - 1], K[i]], excess))
-
-        for i in range(1, len(calls) - 1):
-            # Convexity with non-uniform spacing:
-            # (K3-K2) C1 - (K3-K1) C2 + (K2-K1) C3 >= 0, scaled to one unit of K2
-            w1, w3 = K[i + 1] - K[i], K[i] - K[i - 1]
-            fly = (w1 * C[i - 1] + w3 * C[i + 1]) / (w1 + w3) - C[i]
-            if -fly > tol:
-                violations.append(Violation("butterfly", days, [K[i - 1], K[i], K[i + 1]], -fly))
-
-        k, w, strikes, quotes = [], [], [], []
-        for c in calls:
-            iv = implied_volatility(c["price"], c["spot"], c["strike"], T, r, 1).sigma
-            if not math.isnan(iv):
-                k.append(math.log(c["strike"] / (c["spot"] * math.exp(r * T))))
-                w.append(iv * iv * T)
-                strikes.append(c["strike"])
-                quotes.append(c)
-        slices.append((T, days, strikes, k, w, quotes))
-
-    # Calendar: on each longer expiry's points, compare with the shorter
-    # expiry's total variance interpolated linearly in k (no extrapolation).
-    # Size is in price units: the longer call's price at the shorter expiry's
-    # total variance, less its quoted price.
-    # An expiry with fewer than two solved quotes cannot be interpolated, so
-    # later expiries are compared with the last one that can.
-    base = None
-    for T2, days2, strikes2, k2, w2, quotes2 in slices:
-        if base is None:
-            if len(k2) >= 2:
-                base = (k2, w2)
-            continue
-        k1, w1 = base
-        if len(k2) >= 2:
-            base = (k2, w2)
-        for strike, k, w, c in zip(strikes2, k2, w2, quotes2):
-            if not k1[0] <= k <= k1[-1]:
-                continue
-            w_min = float(np.interp(k, k1, w1))
-            if w_min <= w:
-                continue
-            floor = black_scholes_price(c["spot"], strike, T2, c["interest_rate"], math.sqrt(w_min / T2), 1)
-            if floor - c["price"] > tol:
-                violations.append(Violation("calendar", days2, [strike], floor - c["price"]))
-
-    return violations

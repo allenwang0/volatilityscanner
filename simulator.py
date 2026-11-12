@@ -1,6 +1,6 @@
 import numpy as np
-import time
-from engine import black_scholes_price
+
+from engine import CALL, Chain, black_scholes_price
 
 
 class MarketSimulator:
@@ -17,42 +17,35 @@ class MarketSimulator:
         # Optional quote increment (e.g. 0.05); None keeps full-precision prices
         self.tick_size = tick_size
 
-    def generate_tick(self):
-        """
-        Simulates a tick of data.
-        Returns a list of option dicts with current Market Prices.
-        """
-        # Random walk for Spot Price
-        self.spot_price *= (1 + np.random.normal(0, 0.0005))
+    def generate_tick(self) -> Chain:
+        """Move spot one step and return a call chain priced from a noisy smile."""
+        self.spot_price *= 1 + np.random.normal(0, 0.0005)
 
-        options_chain = []
+        days = np.repeat(np.round(self.expiries * 365, 1), len(self.strikes))
+        T = np.repeat(self.expiries, len(self.strikes))
+        # Price the same strike the payload reports
+        strike = np.tile(np.round(self.strikes, 2), len(self.expiries))
+        price = np.empty(len(strike))
+        for i, (K, t) in enumerate(zip(strike, T, strict=True)):
+            # Simulate Vol Smile: Curvature based on moneyness
+            simulated_iv = self.base_vol + 1.5 * (K / self.spot_price - 1) ** 2
+            # Add random noise (jitter) to simulate market inefficiencies
+            simulated_iv += np.random.normal(0, 0.002)
+            price[i] = black_scholes_price(self.spot_price, K, t, self.r, simulated_iv, CALL)
+        if self.tick_size:
+            price = np.round(price / self.tick_size) * self.tick_size
 
-        for T in self.expiries:
-            for K in self.strikes:
-                K = round(K, 2)  # Price the same strike the payload reports
-                # Simulate Vol Smile: Curvature based on moneyness
-                moneyness = K / self.spot_price
-                # A parabola equation for vol: 0.15 + steepness * (moneyness - 1)^2
-                simulated_iv = self.base_vol + 1.5 * (moneyness - 1) ** 2
-
-                # Add random noise (jitter) to simulate market inefficiencies
-                noise = np.random.normal(0, 0.002)
-                simulated_iv += noise
-
-                # Calculate the theoretical price using this messy IV
-                # We only simulate CALLS for this demo to keep it simple
-                price = black_scholes_price(self.spot_price, K, T, self.r, simulated_iv, 1)
-                if self.tick_size:
-                    price = round(price / self.tick_size) * self.tick_size
-
-                options_chain.append({
-                    "strike": K,
-                    "expiry": round(T * 365, 1),  # Days
-                    "time_to_expiry": T,
-                    "price": price,
-                    "type": "call",
-                    "spot": self.spot_price,
-                    "interest_rate": self.r
-                })
-
-        return options_chain
+        n = len(price)
+        return Chain(
+            spot=self.spot_price,
+            r=self.r,
+            q=0.0,
+            expiry_days=days,
+            T=T,
+            strike=strike,
+            flag=np.full(n, CALL),
+            price=price,
+            forward=self.spot_price * np.exp(self.r * T),
+            bid=np.full(n, np.nan),
+            ask=np.full(n, np.nan),
+        )

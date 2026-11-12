@@ -93,13 +93,15 @@ def machine() -> str:
 def main() -> None:
     print(f"{machine()}, median of {REPEATS} runs, seed 7")
     print(
-        "| options | scalar loop (ms) | vectorized (ms) | speedup | Brent fallback | max diff, vega > 1e-4 S |"
+        "| options | scalar loop (ms) | vectorized (ms) | speedup | Brent fallback "
+        "| max diff, vega > 1e-4 S |"
     )
     print("|---:|---:|---:|---:|---:|---:|")
     for row in run():
         print(
             f"| {row.n:,} | {row.scalar_ms:.1f} | {row.vectorized_ms:.1f} | "
-            f"{row.scalar_ms / row.vectorized_ms:.0f}x | {row.brent_share:.1%} | {row.max_abs_diff:.1e} |"
+            f"{row.scalar_ms / row.vectorized_ms:.0f}x | {row.brent_share:.1%} "
+            f"| {row.max_abs_diff:.1e} |"
         )
 
 

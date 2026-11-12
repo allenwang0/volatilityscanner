@@ -12,7 +12,9 @@ def test_payload_prices_match_the_payload_strike_and_spot():
     # strike or rounded to cents, every recovered IV is off.
     sim = MarketSimulator(seed=1, noise_sd=0.0)
     chain = sim.generate_tick()
-    for K, T, f, price, sigma in zip(chain.strike, chain.T, chain.flag, chain.price, sim.last_model_iv):
+    for K, T, f, price, sigma in zip(
+        chain.strike, chain.T, chain.flag, chain.price, sim.last_model_iv
+    ):
         expected = black_scholes_price(chain.spot, K, T, chain.r, sigma, int(f))
         assert price == pytest.approx(expected, rel=1e-12, abs=1e-12)
 

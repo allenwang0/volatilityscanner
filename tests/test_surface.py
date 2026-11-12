@@ -5,15 +5,17 @@ import pytest
 
 from engine import implied_volatility_vec
 from simulator import MarketSimulator
-from svi import SVIParams
 from surface import fit_surface, fitted_calendar_crossings, skew_25_delta, surface_grid
+from svi import SVIParams
 
 
 @pytest.fixture(scope="module")
 def noiseless():
     sim = MarketSimulator(seed=3, noise_sd=0.0)
     chain = sim.generate_tick()
-    iv = implied_volatility_vec(chain.price, chain.spot, chain.strike, chain.T, chain.r, chain.flag).sigma
+    iv = implied_volatility_vec(
+        chain.price, chain.spot, chain.strike, chain.T, chain.r, chain.flag
+    ).sigma
     return sim, fit_surface(chain, iv)
 
 

@@ -31,7 +31,7 @@ live = False
 latest = {"text": None}
 # Connected WebSockets, each with a one-slot outbox. All share one tick
 # sequence; a client that falls behind skips to the newest tick.
-clients = {}
+clients: dict[WebSocket, asyncio.Queue[str]] = {}
 
 
 def finite_or_none(values):
@@ -40,7 +40,9 @@ def finite_or_none(values):
 
 
 def build_payload(chain, tick=0):
-    solved = implied_volatility_vec(chain.price, chain.spot, chain.strike, chain.T, chain.r, chain.flag, chain.q)
+    solved = implied_volatility_vec(
+        chain.price, chain.spot, chain.strike, chain.T, chain.r, chain.flag, chain.q
+    )
     iv = solved.sigma
     has_quotes = bool(np.isfinite(chain.bid).any())
     scan = check_static_arbitrage(chain, iv, LIVE_TOLERANCE if has_quotes else SIMULATED_TOLERANCE)

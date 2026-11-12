@@ -57,8 +57,7 @@ class MarketSimulator:
     def current_slices(self) -> list[tuple[float, SVIParams]]:
         scale = math.exp(self.level)
         return [
-            (days, SVIParams(p.a * scale, p.b * scale, p.rho, p.m, p.s))
-            for days, p in self.slices
+            (days, SVIParams(p.a * scale, p.b * scale, p.rho, p.m, p.s)) for days, p in self.slices
         ]
 
     def generate_tick(self) -> Chain:
@@ -81,7 +80,9 @@ class MarketSimulator:
         flag_a = np.concatenate(flag)
         self.last_model_iv = np.concatenate(model_iv)
         noise = self.rng.normal(0, self.noise_sd, n_strikes * len(self.slices))
-        quoted_iv = self.last_model_iv + np.repeat(noise.reshape(len(self.slices), 1, -1), 2, 1).ravel()
+        quoted_iv = (
+            self.last_model_iv + np.repeat(noise.reshape(len(self.slices), 1, -1), 2, 1).ravel()
+        )
         T_a = days_a / 365
         price = np.array(
             [

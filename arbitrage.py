@@ -59,9 +59,7 @@ def _strike_checks(
         if rise > tol:
             found.append(Violation("monotonicity", days, (k1, k2), rise, _exceeds(rise, cost)))
         if too_steep > tol:
-            found.append(
-                Violation("slope", days, (k1, k2), too_steep, _exceeds(too_steep, cost))
-            )
+            found.append(Violation("slope", days, (k1, k2), too_steep, _exceeds(too_steep, cost)))
     for i in range(len(K) - 2):
         k1, k2, k3 = float(K[i]), float(K[i + 1]), float(K[i + 2])
         lam = (k3 - k2) / (k3 - k1)
@@ -130,7 +128,13 @@ def _calendar_checks(
             if w_floor <= iv[i] ** 2 * T:
                 continue
             floor_price = black_scholes_price(
-                chain.spot, float(chain.strike[i]), T, chain.r, math.sqrt(w_floor / T), CALL, chain.q
+                chain.spot,
+                float(chain.strike[i]),
+                T,
+                chain.r,
+                math.sqrt(w_floor / T),
+                CALL,
+                chain.q,
             )
             size = floor_price - float(chain.price[i])
             if size > tol:

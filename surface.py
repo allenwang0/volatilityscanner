@@ -66,7 +66,9 @@ def skew_25_delta(params: SVIParams, T: float, k_lo: float, k_hi: float) -> floa
 def fit_surface(chain: Chain, iv: np.ndarray) -> list[SliceFit]:
     """Fit one SVI slice per expiry to the out-of-the-money quotes with a solved IV."""
     otm = otm_mask(chain)
-    vega = vega_vec(chain.spot, chain.strike, chain.T, chain.r, np.where(np.isfinite(iv), iv, 0.2), chain.q)
+    vega = vega_vec(
+        chain.spot, chain.strike, chain.T, chain.r, np.where(np.isfinite(iv), iv, 0.2), chain.q
+    )
     slices = []
     for days in np.unique(chain.expiry_days):
         use = (chain.expiry_days == days) & otm & np.isfinite(iv)

@@ -13,6 +13,7 @@ import numpy as np
 from simulator import MarketSimulator
 from arbitrage import check_static_arbitrage
 from engine import CALL, implied_volatility_vec
+from surface import fit_surface, fitted_calendar_crossings, slice_curve, surface_grid
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +34,12 @@ def build_payload(chain, tick=0):
     solved = implied_volatility_vec(chain.price, chain.spot, chain.strike, chain.T, chain.r, chain.flag, chain.q)
     iv = solved.sigma
     scan = check_static_arbitrage(chain, iv)
+    slices = fit_surface(chain, iv)
     return {
         "tick": tick,
+        "source": chain.source,
         "spot": chain.spot,
+        "k": np.log(chain.strike / chain.forward).tolist(),
         "strike": chain.strike.tolist(),
         "expiry_days": chain.expiry_days.tolist(),
         "type": ["call" if f == CALL else "put" for f in chain.flag],
@@ -46,6 +50,24 @@ def build_payload(chain, tick=0):
         "violations": [asdict(v) for v in scan.violations],
         "conditions_checked": scan.conditions_checked,
         "quotes_checked": scan.quotes_checked,
+        "slices": [slice_payload(sl) for sl in slices],
+        "surface": surface_grid(slices) if slices else None,
+        "fitted_calendar_crossings": fitted_calendar_crossings(slices) if slices else [],
+    }
+
+
+def slice_payload(sl):
+    k, iv = slice_curve(sl)
+    return {
+        "days": sl.days,
+        "forward": sl.forward,
+        "svi": asdict(sl.fit.params),
+        "rmse_vol_points": sl.fit.rmse_vol_points,
+        "min_density_g": sl.fit.min_density_g,
+        "atm_iv": sl.atm_iv,
+        "skew_25d": sl.skew_25d,
+        "curve_k": k.tolist(),
+        "curve_iv": iv.tolist(),
     }
 
 

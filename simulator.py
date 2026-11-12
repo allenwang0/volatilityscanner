@@ -104,4 +104,5 @@ class MarketSimulator:
             forward=self.spot * np.exp(self.r * T_a),
             bid=np.full(n, np.nan),
             ask=np.full(n, np.nan),
+            source="Simulated data" if self.seed is None else f"Simulated data, seed {self.seed}",
         )

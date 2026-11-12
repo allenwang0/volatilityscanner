@@ -72,6 +72,7 @@ class Chain:
     forward: np.ndarray
     bid: np.ndarray
     ask: np.ndarray
+    source: str = "Simulated data"
 
     def __len__(self) -> int:
         return len(self.price)

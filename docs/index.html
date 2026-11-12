@@ -124,7 +124,7 @@ tbody tr.selected { outline: 2px solid var(--accent); }
   <p id="loading" class="empty">Waiting for first tick</p>
 
   <div id="content" hidden>
-    <div class="banner warn"><b>Simulated data, seed 7</b>&nbsp;(IV jitter 0.002). Generated 2026-11-12T01:11:47+00:00 by <code>python report.py --seed 7</code>.</div>
+    <div class="banner warn"><b>Simulated data, seed 7</b>&nbsp;(IV jitter 0.002). Generated 2026-11-12T08:12:54+00:00 by <code>python report.py --seed 7</code>.</div>
     <div class="grid">
       <section class="panel">
         <div class="tabs">
@@ -190,7 +190,7 @@ tbody tr.selected { outline: 2px solid var(--accent); }
     </section>
     <section class="panel section">
       <h2>Benchmark: scalar loop vs vectorized solver</h2>
-      <div class="table-wrap"><table><thead><tr><th>Options</th><th>Scalar loop (ms)</th><th>Vectorized (ms)</th><th>Speed-up</th><th>Brent fallback</th></tr></thead><tbody><tr><td>1,000</td><td>6.2</td><td>3.4</td><td>1.8x</td><td>12.0%</td></tr><tr><td>10,000</td><td>112.1</td><td>58.2</td><td>1.9x</td><td>12.8%</td></tr></tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Options</th><th>Scalar loop (ms)</th><th>Vectorized (ms)</th><th>Speed-up</th><th>Brent fallback</th></tr></thead><tbody><tr><td>1,000</td><td>4.8</td><td>2.7</td><td>1.8x</td><td>12.0%</td></tr><tr><td>10,000</td><td>46.2</td><td>24.8</td><td>1.9x</td><td>12.8%</td></tr></tbody></table></div>
       <p class="takeaway">Median of 5 runs, seed 7, arm64 Darwin 27.0.0, Python 3.15.2.</p>
     </section>
     <script>
@@ -461,7 +461,8 @@ tbody tr.selected { outline: 2px solid var(--accent); }
   function sourceLabel(src) {
     if (!src) return "";
     if (src.kind === "simulated") return "Simulated, seed " + src.seed + ", IV jitter " + src.jitter;
-    return "yfinance " + src.symbol + (src.quote_time ? ", quotes as of " + src.quote_time : "");
+    return "yfinance " + src.symbol + (src.fetched_at ? ", fetched " + src.fetched_at : "") +
+      ", rate " + pct(src.rate, 2);
   }
 
   function renderHeader(p) {

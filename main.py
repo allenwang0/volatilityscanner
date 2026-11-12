@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from analysis import analyze_chain
@@ -91,6 +92,7 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan)
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
+app.mount("/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)

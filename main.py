@@ -12,7 +12,7 @@ import numpy as np
 
 from simulator import MarketSimulator
 from arbitrage import check_static_arbitrage
-from engine import CALL, implied_volatility
+from engine import CALL, implied_volatility_vec
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +30,8 @@ def finite_or_none(values):
 
 
 def build_payload(chain, tick=0):
-    results = [
-        implied_volatility(p, chain.spot, K, T, chain.r, int(f), q=chain.q)
-        for p, K, T, f in zip(chain.price, chain.strike, chain.T, chain.flag, strict=True)
-    ]
-    iv = np.array([res.sigma for res in results])
+    solved = implied_volatility_vec(chain.price, chain.spot, chain.strike, chain.T, chain.r, chain.flag, chain.q)
+    iv = solved.sigma
     scan = check_static_arbitrage(chain, iv)
     return {
         "tick": tick,
@@ -44,8 +41,8 @@ def build_payload(chain, tick=0):
         "type": ["call" if f == CALL else "put" for f in chain.flag],
         "price": finite_or_none(chain.price),
         "iv": finite_or_none(iv),
-        "reason": [res.reason for res in results],
-        "iterations": [res.iterations for res in results],
+        "reason": solved.reason.tolist(),
+        "iterations": solved.iterations.tolist(),
         "violations": [asdict(v) for v in scan.violations],
         "conditions_checked": scan.conditions_checked,
         "quotes_checked": scan.quotes_checked,

@@ -89,6 +89,10 @@ def fit_svi(k, iv, T: float, weights=None, start: SVIParams | None = None) -> SV
     """Fit raw SVI to market IVs at log-forward moneyness k by weighted least squares
     on total variance, with b >= 0, |rho| < 1, s > 0 and a + b s sqrt(1 - rho^2) >= 0.
 
+    The smile's vertex m is kept inside the quoted k range and s below that
+    range's width: on a +-10% strike range, fits with the vertex outside it
+    match the quotes equally well but put a near-vertical wing just past them.
+
     Weights are typically vega, floored at MIN_WEIGHT of the largest. Tries a
     few starting points (plus `start`, such as the previous tick's fit) and
     keeps the best.
@@ -100,8 +104,8 @@ def fit_svi(k, iv, T: float, weights=None, start: SVIParams | None = None) -> SV
     wt = np.sqrt(np.maximum(wt / wt.max(), MIN_WEIGHT))
     span = max(float(k.max() - k.min()), 0.05)
 
-    lo = [0.0, 0.0, -RHO_MAX, float(k.min()) - span, 1e-4]
-    hi = [2 * float(w_mkt.max()) + 1e-6, B_MAX, RHO_MAX, float(k.max()) + span, 2 * span]
+    lo = [0.0, 0.0, -RHO_MAX, float(k.min()), 1e-4]
+    hi = [2 * float(w_mkt.max()) + 1e-6, B_MAX, RHO_MAX, float(k.max()), span]
 
     def residuals(x):
         return wt * (_to_params(x).w(k) - w_mkt)

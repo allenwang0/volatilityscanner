@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 
 from arbitrage import LIVE_TOLERANCE, SIMULATED_TOLERANCE, check_static_arbitrage
 from engine import CALL, implied_volatility_vec
-from simulator import MarketSimulator
+from simulator import IV_NOISE_SD, MarketSimulator
 from surface import fit_surface, fitted_calendar_crossings, slice_curve, surface_grid
 
 logger = logging.getLogger(__name__)
@@ -190,6 +190,9 @@ def parse_args(argv=None):
     parser.add_argument("--source", choices=["simulated", "yfinance"], default="simulated")
     parser.add_argument("--seed", type=int, default=None, help="seed for the simulated chain")
     parser.add_argument("--tick-size", type=float, default=None, help="round simulated prices")
+    parser.add_argument(
+        "--noise-sd", type=float, default=IV_NOISE_SD, help="IV noise per simulated quote"
+    )
     parser.add_argument("--symbol", default="SPY", help="yfinance symbol (live mode)")
     parser.add_argument(
         "--rate", type=float, default=None, help="risk-free rate for live mode (default 0.0406)"
@@ -207,7 +210,8 @@ def configure(args):
         rate = DEFAULT_RATE if args.rate is None else args.rate
         sim, live = LiveFeed(args.symbol, rate), True
     else:
-        sim, live = MarketSimulator(seed=args.seed, tick_size=args.tick_size), False
+        sim = MarketSimulator(seed=args.seed, tick_size=args.tick_size, noise_sd=args.noise_sd)
+        live = False
 
 
 if __name__ == "__main__":

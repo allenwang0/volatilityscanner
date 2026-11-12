@@ -30,6 +30,11 @@ class FakeSocket:
         self.sent.append(json.loads(text)["tick"])
 
 
+def tiny_payload(chain, tick):
+    # These tests are about delivery; a full surface fit per tick would only slow them.
+    return {"tick": tick}
+
+
 async def run_with(sockets, seconds):
     producer = asyncio.create_task(main.produce_ticks())
     endpoints = [asyncio.create_task(main.websocket_endpoint(s)) for s in sockets]
@@ -50,6 +55,7 @@ def test_stalled_client_does_not_hold_up_others(monkeypatch):
     # The producer used to await each send in turn, so one client with a full
     # network buffer froze every other client's feed.
     monkeypatch.setattr(main, "TICK_SECONDS", 0.01)
+    monkeypatch.setattr(main, "build_payload", tiny_payload)
 
     async def scenario():
         slow, fast = FakeSocket(stall_first_send=True), FakeSocket()
@@ -71,6 +77,7 @@ def test_stalled_client_does_not_hold_up_others(monkeypatch):
 
 def test_client_that_disconnects_mid_send_is_dropped(monkeypatch):
     monkeypatch.setattr(main, "TICK_SECONDS", 0.01)
+    monkeypatch.setattr(main, "build_payload", tiny_payload)
 
     async def scenario():
         gone, ok = FakeSocket(fail_send=True), FakeSocket()

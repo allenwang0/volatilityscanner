@@ -24,20 +24,25 @@ def fast_ticks(monkeypatch):
 def produced(monkeypatch):
     """Record the spot of every tick the shared simulator produces."""
     spots = []
-    original = main.sim.generate_tick
+    original = main.source.generate_tick
 
     def recording_tick():
         chain = original()
         spots.append(chain[0]["spot"])
         return chain
 
-    monkeypatch.setattr(main.sim, "generate_tick", recording_tick)
+    monkeypatch.setattr(main.source, "generate_tick", recording_tick)
     return spots
 
 
 def read_ticks(ws, n):
-    payloads = [strict_loads(ws.receive_text()) for _ in range(n)]
-    return {p["tick"]: p["spot"] for p in payloads}
+    """The next n tick payloads as {tick id: spot}, skipping error notices."""
+    ticks = {}
+    while len(ticks) < n:
+        payload = strict_loads(ws.receive_text())
+        if payload["kind"] == "tick":
+            ticks[payload["tick"]] = payload["spot"]
+    return ticks
 
 
 def test_two_clients_see_one_tick_sequence(fast_ticks, produced):
@@ -59,7 +64,7 @@ def test_two_clients_see_one_tick_sequence(fast_ticks, produced):
 
 
 def test_tick_failure_is_logged_and_other_clients_keep_receiving(fast_ticks, monkeypatch, caplog):
-    original = main.sim.generate_tick
+    original = main.source.generate_tick
     calls = {"n": 0}
 
     def flaky_tick():
@@ -68,7 +73,7 @@ def test_tick_failure_is_logged_and_other_clients_keep_receiving(fast_ticks, mon
             raise RuntimeError("boom")
         return original()
 
-    monkeypatch.setattr(main.sim, "generate_tick", flaky_tick)
+    monkeypatch.setattr(main.source, "generate_tick", flaky_tick)
     with caplog.at_level(logging.ERROR):
         with TestClient(main.app) as client:
             with client.websocket_connect("/ws") as a, client.websocket_connect("/ws") as b:
@@ -81,17 +86,41 @@ def test_tick_failure_is_logged_and_other_clients_keep_receiving(fast_ticks, mon
 
 
 def test_failed_iv_is_sent_as_null_with_a_reason(fast_ticks, monkeypatch):
-    original = main.sim.generate_tick
+    original = main.source.generate_tick
 
     def tick_with_zero_quote():
         chain = original()
-        chain[-1]["price"] = 0.0  # deep OTM 90-day call quoted at zero
+        chain[-1]["price"] = 0.0  # a 90-day quote at zero
         return chain
 
-    monkeypatch.setattr(main.sim, "generate_tick", tick_with_zero_quote)
+    monkeypatch.setattr(main.source, "generate_tick", tick_with_zero_quote)
     with TestClient(main.app) as client:
         with client.websocket_connect("/ws") as ws:
             payload = strict_loads(ws.receive_text())
-    assert payload["z"][-1] is None
-    assert payload["reasons"][-1] == "zero_price"
-    assert len(payload["reasons"]) == len(payload["z"])
+    assert payload["quotes"][-1]["iv"] is None
+    assert payload["quotes"][-1]["reason"] == "zero_price"
+
+
+def test_tick_failure_is_reported_to_clients(fast_ticks, monkeypatch):
+    # The page keeps the last good snapshot, marks it stale and shows this text.
+    def broken_tick():
+        raise RuntimeError("feed down")
+
+    monkeypatch.setattr(main.source, "generate_tick", broken_tick)
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws") as ws:
+            msg = strict_loads(ws.receive_text())
+    assert msg["kind"] == "error"
+    assert "feed down" in msg["message"]
+
+
+def test_snapshot_endpoint_returns_the_latest_tick(fast_ticks):
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws") as ws:
+            seen = strict_loads(ws.receive_text())
+        res = client.get("/snapshot.json")
+    assert res.status_code == 200
+    snap = strict_loads(res.text)
+    assert snap["tick"] >= seen["tick"]
+    assert {"quotes", "expiries", "violations", "checks", "source"} <= set(snap)
+    assert all("svi" in e for e in snap["expiries"])

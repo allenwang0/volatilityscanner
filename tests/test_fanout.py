@@ -3,6 +3,7 @@
 import asyncio
 import json
 
+import pytest
 from fastapi import WebSocketDisconnect
 
 import main
@@ -47,10 +48,16 @@ async def stop(producer, endpoints, sockets):
     await asyncio.gather(producer, return_exceptions=True)
 
 
-def test_stalled_client_does_not_hold_up_others(monkeypatch):
+@pytest.fixture(autouse=True)
+def cheap_ticks(monkeypatch):
+    # These tests are about delivery, so skip the chain analysis.
+    monkeypatch.setattr(main, "TICK_SECONDS", 0.01)
+    monkeypatch.setattr(main, "make_tick", lambda tick: json.dumps({"kind": "tick", "tick": tick}))
+
+
+def test_stalled_client_does_not_hold_up_others():
     # The producer used to await each send in turn, so one client with a full
     # network buffer froze every other client's feed.
-    monkeypatch.setattr(main, "TICK_SECONDS", 0.01)
 
     async def scenario():
         slow, fast = FakeSocket(stall_first_send=True), FakeSocket()
@@ -70,8 +77,7 @@ def test_stalled_client_does_not_hold_up_others(monkeypatch):
     assert slow_sent[1] >= latest
 
 
-def test_client_that_disconnects_mid_send_is_dropped(monkeypatch):
-    monkeypatch.setattr(main, "TICK_SECONDS", 0.01)
+def test_client_that_disconnects_mid_send_is_dropped():
 
     async def scenario():
         gone, ok = FakeSocket(fail_send=True), FakeSocket()

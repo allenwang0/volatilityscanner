@@ -43,6 +43,9 @@ class MarketSimulator:
         self.log_level = 0.0
         self.rho = RHO_MEAN
 
+    def describe(self) -> dict:
+        return {"kind": "simulated", "seed": self.seed, "jitter": self.jitter, "tick_size": self.tick_size}
+
     def true_params(self, T: float) -> SVIParams:
         theta = atm_vol_curve(T) ** 2 * T * math.exp(self.log_level)
         return ssvi_slice(theta, self.rho, ETA, GAMMA)

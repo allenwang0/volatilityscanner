@@ -11,6 +11,7 @@ def strict_loads(text):
     # Browsers' JSON.parse rejects NaN/Infinity; so must we.
     def reject(const):
         raise ValueError(f"non-standard JSON constant {const}")
+
     return json.loads(text, parse_constant=reject)
 
 
@@ -57,9 +58,7 @@ def test_two_clients_see_one_tick_sequence(fast_ticks, produced):
         assert produced[tick - 1] == spot
 
 
-def test_tick_failure_is_logged_and_other_clients_keep_receiving(
-    fast_ticks, monkeypatch, caplog
-):
+def test_tick_failure_is_logged_and_other_clients_keep_receiving(fast_ticks, monkeypatch, caplog):
     original = main.sim.generate_tick
     calls = {"n": 0}
 

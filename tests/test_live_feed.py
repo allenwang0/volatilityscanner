@@ -24,6 +24,7 @@ class FakeCalls:
 
 class FakeTicker:
     """Offline stand-in for yfinance.Ticker with one expiry a year out."""
+
     options = ["2099-01-16"]
 
     def __init__(self, symbol):
@@ -51,6 +52,7 @@ def live_feed(monkeypatch):
     monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=FakeTicker))
     monkeypatch.delitem(sys.modules, "live_feed", raising=False)
     import live_feed
+
     return live_feed
 
 

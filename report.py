@@ -81,7 +81,9 @@ def noise_sweep(seed: int) -> list[dict[str, float]]:
     rows = []
     for sd in NOISE_LEVELS:
         sim = MarketSimulator(seed=seed, noise_sd=sd)
-        counts = [len(build_payload(sim.generate_tick(), t)["violations"]) for t in range(NOISE_TICKS)]
+        counts = [
+            len(build_payload(sim.generate_tick(), t)["violations"]) for t in range(NOISE_TICKS)
+        ]
         rows.append(
             {
                 "noise_sd": sd,
@@ -185,7 +187,13 @@ def render_html(report: dict[str, Any]) -> str:
     p = report["payload"]
     rt = report["round_trip"]
     bench = _table(
-        ["Options", "Scalar loop (ms)", "Vectorized (ms)", "Brent fallback", "Max diff, vega > 1e-4 S"],
+        [
+            "Options",
+            "Scalar loop (ms)",
+            "Vectorized (ms)",
+            "Brent fallback",
+            "Max diff, vega > 1e-4 S",
+        ],
         [
             [
                 f"{b['n']:,}",
@@ -332,7 +340,9 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--out", type=Path, default=Path("docs/index.html"))
-    parser.add_argument("--card", type=Path, default=None, help="also write the portfolio card JSON")
+    parser.add_argument(
+        "--card", type=Path, default=None, help="also write the portfolio card JSON"
+    )
     args = parser.parse_args(argv)
     report = build(args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)

@@ -9,41 +9,31 @@ CALL = 1
 PUT = -1
 
 
-# ---------------------------------------------------------
-# 1. Standard Black-Scholes (No Numba)
-# ---------------------------------------------------------
-# REMOVED: @jit(nopython=True)
-def standard_normal_cdf(x):
+def standard_normal_cdf(x: float) -> float:
     return 0.5 * (1 + math.erf(x / math.sqrt(2.0)))
 
 
-# REMOVED: @jit(nopython=True)
-def standard_normal_pdf(x):
-    return (1.0 / math.sqrt(2.0 * math.pi)) * math.exp(-0.5 * x * x)
+def standard_normal_pdf(x: float) -> float:
+    return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
 
 
-# REMOVED: @jit(nopython=True)
-def black_scholes_price(S, K, T, r, sigma, option_type_flag, q=0.0):
-    # option_type_flag: 1 for Call, -1 for Put; q: continuous dividend yield
+def black_scholes_price(
+    S: float, K: float, T: float, r: float, sigma: float, option_type_flag: int, q: float = 0.0
+) -> float:
+    """European option price; option_type_flag is CALL (1) or PUT (-1), q a dividend yield."""
     if T <= 0 or sigma <= 0:
         return max(0.0, (S - K) * option_type_flag)
 
     d1 = (math.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
     d2 = d1 - sigma * math.sqrt(T)
-
-    if option_type_flag == 1:  # Call
-        price = S * math.exp(-q * T) * standard_normal_cdf(d1) - K * math.exp(
-            -r * T
-        ) * standard_normal_cdf(d2)
-    else:  # Put
-        price = K * math.exp(-r * T) * standard_normal_cdf(-d2) - S * math.exp(
-            -q * T
-        ) * standard_normal_cdf(-d1)
-    return price
+    disc_spot = S * math.exp(-q * T)
+    disc_strike = K * math.exp(-r * T)
+    if option_type_flag == CALL:
+        return disc_spot * standard_normal_cdf(d1) - disc_strike * standard_normal_cdf(d2)
+    return disc_strike * standard_normal_cdf(-d2) - disc_spot * standard_normal_cdf(-d1)
 
 
-# REMOVED: @jit(nopython=True)
-def calculate_vega(S, K, T, r, sigma, q=0.0):
+def calculate_vega(S: float, K: float, T: float, r: float, sigma: float, q: float = 0.0) -> float:
     d1 = (math.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
     return S * math.exp(-q * T) * math.sqrt(T) * standard_normal_pdf(d1)
 
@@ -51,6 +41,7 @@ def calculate_vega(S, K, T, r, sigma, q=0.0):
 SIGMA_LO, SIGMA_HI = 1e-4, 5.0  # search bracket for sigma
 MAX_NEWTON_ITER = 50
 SIGMA_TOL = 1e-12  # stop when a Newton step moves sigma less than this
+MIN_VEGA_PER_SPOT = 1e-8  # below this Newton steps are unreliable; use Brent instead
 
 
 @dataclass
@@ -86,7 +77,20 @@ class IVResult:
     reason: str  # "ok" or why no volatility was found
 
 
-def implied_volatility(market_price, S, K, T, r, option_type_flag, q=0.0) -> IVResult:
+def implied_volatility(
+    market_price: float,
+    S: float,
+    K: float,
+    T: float,
+    r: float,
+    option_type_flag: int,
+    q: float = 0.0,
+) -> IVResult:
+    """Black-Scholes implied volatility with bounds checks, Newton and a Brent fallback.
+
+    Failed solves return sigma NaN with a reason code; an unconverged iterate is never
+    returned.
+    """
     nan = float("nan")
     if not all(math.isfinite(x) for x in (market_price, S, K, T, r, q)):
         return IVResult(nan, False, 0, "invalid_input")
@@ -98,7 +102,7 @@ def implied_volatility(market_price, S, K, T, r, option_type_flag, q=0.0) -> IVR
     # Static no-arbitrage bounds on a European option price
     fwd_spot = S * math.exp(-q * T)
     disc_strike = K * math.exp(-r * T)
-    if option_type_flag == 1:
+    if option_type_flag == CALL:
         lower, upper = max(0.0, fwd_spot - disc_strike), fwd_spot
     else:
         lower, upper = max(0.0, disc_strike - fwd_spot), disc_strike
@@ -107,7 +111,7 @@ def implied_volatility(market_price, S, K, T, r, option_type_flag, q=0.0) -> IVR
     if market_price >= upper:
         return IVResult(nan, False, 0, "above_upper_bound")
 
-    def objective(sig):
+    def objective(sig: float) -> float:
         return black_scholes_price(S, K, T, r, sig, option_type_flag, q) - market_price
 
     # Brenner-Subrahmanyam initial guess, clamped into the bracket
@@ -116,7 +120,7 @@ def implied_volatility(market_price, S, K, T, r, option_type_flag, q=0.0) -> IVR
 
     for i in range(1, MAX_NEWTON_ITER + 1):
         vega = calculate_vega(S, K, T, r, sigma, q)
-        if vega < 1e-8 * S:
+        if vega < MIN_VEGA_PER_SPOT * S:
             break
         step = objective(sigma) / vega
         new_sigma = sigma - step
@@ -131,7 +135,7 @@ def implied_volatility(market_price, S, K, T, r, option_type_flag, q=0.0) -> IVR
         return IVResult(nan, False, 0, "outside_bracket")
     # brentq raises if it fails to converge
     sigma, info = brentq(objective, SIGMA_LO, SIGMA_HI, xtol=SIGMA_TOL, full_output=True)
-    return IVResult(sigma, True, info.iterations, "ok")
+    return IVResult(float(sigma), True, info.iterations, "ok")
 
 
 @dataclass
@@ -208,7 +212,7 @@ def implied_volatility_vec(price, S, K, T, r, flag, q=0.0) -> IVBatch:
             break
         a_S, a_K, a_T, a_r, a_q, a_f = S[idx], K[idx], T[idx], r[idx], q[idx], flag[idx]
         vega = vega_vec(a_S, a_K, a_T, a_r, sig[idx], a_q)
-        flat = vega < 1e-8 * a_S
+        flat = vega < MIN_VEGA_PER_SPOT * a_S
         model = black_scholes_price_vec(a_S, a_K, a_T, a_r, sig[idx], a_f, a_q)
         step = np.where(flat, 0.0, (model - price[idx]) / np.where(flat, 1.0, vega))
         new = sig[idx] - step

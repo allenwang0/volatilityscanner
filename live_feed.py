@@ -4,7 +4,7 @@ Yahoo's data is for personal use under its terms; nothing fetched here is saved.
 """
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from datetime import time as clock_time
 from zoneinfo import ZoneInfo
 
@@ -28,7 +28,7 @@ def years_to_expiry(expiry_date, now):
     )
     # Subtract in UTC: datetimes sharing a tzinfo subtract as wall-clock times,
     # which is an hour off across a DST change.
-    elapsed = expiry.astimezone(timezone.utc) - now.astimezone(timezone.utc)
+    elapsed = expiry.astimezone(UTC) - now.astimezone(UTC)
     return elapsed.total_seconds() / (365 * 24 * 3600)
 
 
@@ -70,7 +70,9 @@ class LiveFeed:
         """Download the nearest expiries (2 to 3 seconds each) and return calls and puts at mid."""
         now = now or datetime.now(NY)
         spot = self.get_spot_price()
-        cols = {name: [] for name in ("days", "T", "strike", "flag", "bid", "ask", "forward")}
+        cols: dict[str, list[float]] = {
+            name: [] for name in ("days", "T", "strike", "flag", "bid", "ask", "forward")
+        }
         for expiry_date in self.ticker.options[:EXPIRIES]:
             T = years_to_expiry(expiry_date, now)
             if T <= 0:

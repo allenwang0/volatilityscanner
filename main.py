@@ -79,13 +79,17 @@ def publish(text):
         outbox.put_nowait(text)
 
 
+def encode_tick(tick):
+    return json.dumps(build_payload(sim.generate_tick(), tick), allow_nan=False)
+
+
 async def produce_ticks():
     """Tick the simulator once per interval and send the same payload to every client."""
     tick = 0
     while True:
         tick += 1
         try:
-            text = json.dumps(build_payload(sim.generate_tick(), tick), allow_nan=False)
+            text = await asyncio.to_thread(encode_tick, tick)
         except Exception:
             logger.exception("Failed to build tick payload")
         else:

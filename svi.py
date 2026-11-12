@@ -9,6 +9,14 @@ from scipy.special import ndtr
 
 DENSITY_GRID = np.linspace(-1.0, 1.0, 201)  # k grid for the butterfly (density) check
 RHO_MAX = 0.999  # keeps sqrt(1 - rho^2) away from zero
+# Roger Lee's moment formula caps the wing slope of total variance,
+# b (1 + |rho|), at 2; b <= 1 keeps every fit inside it.
+B_MAX = 1.0
+DELTA_K_GRID = np.linspace(-1.0, 1.0, 401)
+# Vega weights are floored at 5% of the largest so short-dated wing quotes
+# (near-zero vega) still shape the fit; without the floor the 7-day fit
+# misses its wings by over a vol point.
+MIN_WEIGHT = 0.05
 
 
 @dataclass
@@ -81,18 +89,19 @@ def fit_svi(k, iv, T: float, weights=None, start: SVIParams | None = None) -> SV
     """Fit raw SVI to market IVs at log-forward moneyness k by weighted least squares
     on total variance, with b >= 0, |rho| < 1, s > 0 and a + b s sqrt(1 - rho^2) >= 0.
 
-    Weights are typically vega. Tries a few starting points (plus `start`, for
-    example the previous tick's fit) and keeps the best.
+    Weights are typically vega, floored at MIN_WEIGHT of the largest. Tries a
+    few starting points (plus `start`, such as the previous tick's fit) and
+    keeps the best.
     """
     k = np.asarray(k, dtype=float)
     iv = np.asarray(iv, dtype=float)
     w_mkt = iv * iv * T
     wt = np.ones_like(k) if weights is None else np.asarray(weights, dtype=float)
-    wt = np.sqrt(wt / wt.max())
+    wt = np.sqrt(np.maximum(wt / wt.max(), MIN_WEIGHT))
     span = max(float(k.max() - k.min()), 0.05)
 
     lo = [0.0, 0.0, -RHO_MAX, float(k.min()) - span, 1e-4]
-    hi = [2 * float(w_mkt.max()) + 1e-6, 10.0, RHO_MAX, float(k.max()) + span, 2 * span]
+    hi = [2 * float(w_mkt.max()) + 1e-6, B_MAX, RHO_MAX, float(k.max()) + span, 2 * span]
 
     def residuals(x):
         return wt * (_to_params(x).w(k) - w_mkt)
@@ -134,17 +143,25 @@ def atm_vol(p: SVIParams, T: float) -> float:
 
 
 def _k_at_delta(p: SVIParams, T: float, call_delta: float) -> float:
-    """Log-forward moneyness where the forward call delta N(d1) equals call_delta."""
+    """Log-forward moneyness where the forward call delta N(d1) equals call_delta.
+
+    Takes the root closest to the money; NaN if the smile never reaches that delta.
+    """
 
     def f(k):
-        sig = float(p.iv(k, T)) * math.sqrt(T)
-        return float(ndtr(-k / sig + sig / 2)) - call_delta
+        sig = np.sqrt(np.maximum(p.w(k), 1e-12))
+        return ndtr(-k / sig + sig / 2) - call_delta
 
-    return brentq(f, -3.0, 3.0)
+    vals = f(DELTA_K_GRID)
+    crossings = np.flatnonzero(np.sign(vals[:-1]) != np.sign(vals[1:]))
+    if crossings.size == 0:
+        return float("nan")
+    i = crossings[np.argmin(np.abs(DELTA_K_GRID[crossings]))]
+    return brentq(lambda x: float(f(x)), DELTA_K_GRID[i], DELTA_K_GRID[i + 1])
 
 
 def skew_25d(p: SVIParams, T: float) -> float:
-    """25-delta put IV minus 25-delta call IV, in vol points."""
+    """25-delta put IV minus 25-delta call IV, in vol points (NaN if out of reach)."""
     k_put = _k_at_delta(p, T, 0.75)  # a 25-delta put has call delta 0.75
     k_call = _k_at_delta(p, T, 0.25)
     return float(p.iv(k_put, T) - p.iv(k_call, T)) * 100

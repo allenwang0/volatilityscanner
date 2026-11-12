@@ -14,6 +14,7 @@ import numpy as np
 from engine import CALL, PUT, Chain, black_scholes_price
 
 SIMULATED_TOLERANCE = 1e-6
+LIVE_TOLERANCE = 0.005  # half of the $0.01 minimum tick on SPY options
 
 
 @dataclass(frozen=True)

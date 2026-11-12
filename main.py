@@ -75,7 +75,7 @@ def slice_payload(sl):
         "rmse_vol_points": sl.fit.rmse_vol_points,
         "min_density_g": sl.fit.min_density_g,
         "atm_iv": sl.atm_iv,
-        "skew_25d": sl.skew_25d,
+        "skew_25d": sl.skew_25d if math.isfinite(sl.skew_25d) else None,
         "curve_k": k.tolist(),
         "curve_iv": iv.tolist(),
     }

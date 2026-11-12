@@ -8,7 +8,7 @@ setup:
 lint:
 	.venv/bin/ruff check .
 	.venv/bin/ruff format --check .
-	.venv/bin/mypy engine.py
+	.venv/bin/mypy engine.py svi.py analysis.py report.py
 
 test:
 	.venv/bin/pytest

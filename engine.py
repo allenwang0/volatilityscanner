@@ -288,7 +288,9 @@ def scan_arbitrage_with_counts(chain: list[dict], tol: float = ARB_TOL) -> tuple
             if gap > tol:
                 violations.append(_violation("parity", days, [c, p], gap))
 
-        k, w, solved = [], [], []
+        k: list[float] = []
+        w: list[float] = []
+        solved = []
         for c in calls:
             iv = implied_volatility(c["price"], c["spot"], c["strike"], T, r, 1, q).sigma
             if not math.isnan(iv):
@@ -312,12 +314,12 @@ def scan_arbitrage_with_counts(chain: list[dict], tol: float = ARB_TOL) -> tuple
         k1, w1 = base
         if len(k2) >= 2:
             base = (k2, w2)
-        for k, w, c in zip(k2, w2, calls2, strict=True):
-            if not k1[0] <= k <= k1[-1]:
+        for k_c, w_c, c in zip(k2, w2, calls2, strict=True):
+            if not k1[0] <= k_c <= k1[-1]:
                 continue
             checked += 1
-            w_min = float(np.interp(k, k1, w1))
-            if w_min <= w:
+            w_min = float(np.interp(k_c, k1, w1))
+            if w_min <= w_c:
                 continue
             q = c.get("dividend_yield", 0.0)
             floor = black_scholes_price(

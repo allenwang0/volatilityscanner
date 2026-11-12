@@ -1,63 +1,43 @@
+"""FastAPI app: one producer ticks the option source and fans each snapshot out to every client."""
+
+import argparse
 import asyncio
 import contextlib
 import json
 import logging
-import math
+import os
 from contextlib import asynccontextmanager
-from dataclasses import asdict
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from engine import implied_volatility, scan_arbitrage
-from simulator import MarketSimulator
+from analysis import analyze_chain
+from engine import ARB_TOL
+from simulator import DEFAULT_JITTER, MarketSimulator
 
 logger = logging.getLogger(__name__)
 
-TICK_SECONDS = 0.5  # 2 ticks per second
+TICK_SECONDS = 0.5  # simulated mode: 2 ticks per second
+HERE = os.path.dirname(os.path.abspath(__file__))
 
-sim = MarketSimulator()
+source = MarketSimulator()
+arb_tol = ARB_TOL
 # Connected WebSockets, each with a one-slot outbox. All share one tick
 # sequence; a client that falls behind skips to the newest tick.
-clients = {}
+clients: dict = {}
+state: dict = {"latest": None, "fits": {}, "last_chain": None}
 
 
 def build_payload(raw_chain, tick=0):
-    # 1. The "Quant" Job: Calculate IV and Surface Points
-    x_strikes = []
-    y_expiry = []
-    z_iv = []
-    reasons = []
-
-    for opt in raw_chain:
-        # Reverse engineer the IV from the price
-        result = implied_volatility(
-            opt["price"],
-            opt["spot"],
-            opt["strike"],
-            opt["time_to_expiry"],
-            opt["interest_rate"],
-            1,  # Call
-        )
-
-        # Prepare data for Plotly 3D Mesh; JSON has no NaN, so failures are null
-        x_strikes.append(opt["strike"])
-        y_expiry.append(opt["expiry"])
-        z_iv.append(None if math.isnan(result.sigma) else result.sigma)
-        reasons.append(result.reason)
-
-    # 2. Run Arb Scanner
-    arbs = scan_arbitrage(raw_chain)
-
+    snapshot, state["fits"] = analyze_chain(raw_chain, state["fits"], arb_tol)
     return {
+        "kind": "tick",
         "tick": tick,
-        "spot": raw_chain[0]["spot"],
-        "x": x_strikes,
-        "y": y_expiry,
-        "z": z_iv,
-        "reasons": reasons,
-        "arbs": [asdict(a) for a in arbs],
+        "source": source.describe(),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        **snapshot,
     }
 
 
@@ -69,17 +49,33 @@ def publish(text):
         outbox.put_nowait(text)
 
 
+def make_tick(tick):
+    """Fetch a chain and build its payload text; None when the chain has not changed."""
+    chain = source.generate_tick()
+    if chain == state["last_chain"]:
+        return None  # live quotes refresh slower than we poll
+    state["last_chain"] = chain
+    payload = build_payload(chain, tick)
+    text = json.dumps(payload, allow_nan=False)
+    state["latest"] = payload
+    return text
+
+
 async def produce_ticks():
-    """Tick the simulator once per interval and send the same payload to every client."""
+    """Tick the source once per interval and send the same payload to every client."""
     tick = 0
     while True:
         tick += 1
         try:
-            text = json.dumps(build_payload(sim.generate_tick(), tick), allow_nan=False)
-        except Exception:
+            # In a thread: a live chain download takes seconds, and SVI fits
+            # take tens of milliseconds; neither should stall the sockets.
+            text = await asyncio.to_thread(make_tick, tick)
+        except Exception as exc:
             logger.exception("Failed to build tick payload")
+            publish(json.dumps({"kind": "error", "tick": tick, "message": f"{type(exc).__name__}: {exc}"}))
         else:
-            publish(text)
+            if text is not None:
+                publish(text)
 
         await asyncio.sleep(TICK_SECONDS)
 
@@ -94,12 +90,23 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
 
 
 @app.get("/", response_class=HTMLResponse)
 async def get(request: Request):
     return templates.TemplateResponse(request, "index.html")
+
+
+@app.get("/snapshot.json")
+async def snapshot():
+    """The latest tick's chain, IVs, reason codes, SVI fits and violations."""
+    if state["latest"] is None:
+        return JSONResponse({"detail": "Waiting for first tick"}, status_code=503)
+    return JSONResponse(
+        state["latest"],
+        headers={"Content-Disposition": f'attachment; filename="snapshot-{state["latest"]["tick"]}.json"'},
+    )
 
 
 async def send_from(websocket, outbox):
@@ -133,3 +140,29 @@ async def websocket_endpoint(websocket: WebSocket):
         # during shutdown cancels the whole session.
         for task in tasks:
             task.cancel()
+
+
+def main(argv=None):
+    import uvicorn
+
+    global source, TICK_SECONDS, arb_tol
+    parser = argparse.ArgumentParser(description="Serve the volatility dashboard.")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--seed", type=int, default=7, help="simulator seed")
+    parser.add_argument(
+        "--jitter",
+        type=float,
+        default=DEFAULT_JITTER,
+        help="IV noise sd per simulated quote; 0 for clean prices",
+    )
+    parser.add_argument(
+        "--tick-size", type=float, default=None, help="round simulated prices to this increment"
+    )
+    args = parser.parse_args(argv)
+    source = MarketSimulator(seed=args.seed, jitter=args.jitter, tick_size=args.tick_size)
+    uvicorn.run(app, host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()

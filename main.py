@@ -122,6 +122,7 @@ async def produce_ticks():
 
 @asynccontextmanager
 async def lifespan(app):
+    latest["text"] = None  # never serve a tick from a previous run
     producer = asyncio.create_task(produce_ticks())
     yield
     producer.cancel()

@@ -1,92 +1,61 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Quant Volatility Surface</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #111; color: #eee; margin: 0; padding: 20px; }
-        #dashboard { display: flex; height: 90vh; }
-        #plot-container { flex: 3; }
-        #sidebar { flex: 1; padding-left: 20px; border-left: 1px solid #333; }
-        .arb-alert { color: #ff4444; padding: 10px; background: #2a1111; border: 1px solid #ff4444; margin-bottom: 10px; border-radius: 4px; font-size: 12px; }
-        h1 { margin-top: 0; font-size: 1.5rem; }
-        .metric { font-size: 2rem; font-weight: bold; color: #00ff88; }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Volatility Scanner</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-
-    <div id="dashboard">
-        <div id="plot-container"></div>
-
-        <div id="sidebar">
-            <h1>Volatility Surface</h1>
-            <div style="margin-bottom: 20px;">
-                <small>LIVE SPOT PRICE (SPX SIM)</small>
-                <div id="spot-price" class="metric">Loading...</div>
-            </div>
-
-            <h3>Arbitrage Scanner</h3>
-            <div id="arb-feed">
-                </div>
-        </div>
+  <header>
+    <h1>Volatility Scanner</h1>
+    <div class="meta">
+      <span>Source: <b id="source">connecting</b></span>
+      <span>Spot: <b id="spot">-</b></span>
+      <span>Tick: <b id="tick">-</b></span>
     </div>
+    <div class="controls">
+      <button type="button" id="pause" aria-pressed="false">Pause</button>
+      <button type="button" id="theme">Theme</button>
+      <a id="snapshot" href="/snapshot.json" download><button type="button" tabindex="-1">Snapshot</button></a>
+    </div>
+  </header>
 
-    <script>
-        var scheme = location.protocol === "https:" ? "wss://" : "ws://";
-        var ws = new WebSocket(scheme + location.host + "/ws");
-        var plotDiv = document.getElementById('plot-container');
+  <div id="banner" class="banner" hidden role="status"></div>
+  <p id="waiting">Waiting for first tick</p>
 
-        var layout = {
-            title: 'Implied Volatility Surface (Real-Time)',
-            autosize: true,
-            scene: {
-                xaxis: {title: 'Strike Price', color: '#eee'},
-                yaxis: {title: 'Days to Expiry', color: '#eee'},
-                zaxis: {title: 'Implied Volatility', color: '#eee'},
-                camera: { eye: {x: 1.5, y: 1.5, z: 1.2} }
-            },
-            paper_bgcolor: '#111',
-            plot_bgcolor: '#111',
-            font: { color: '#eee' },
-            margin: {l: 0, r: 0, b: 0, t: 50}
-        };
+  <main id="views" class="grid" hidden>
+    <section class="panel">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" id="tab-smile" aria-selected="true">Smile per expiry</button>
+        <button type="button" role="tab" id="tab-surface" aria-selected="false">Surface</button>
+      </div>
+      <div id="view-smile">
+        <p class="takeaway" id="smile-takeaway"></p>
+        <div id="smile" class="chart"></div>
+        <ul id="failed" class="failed"></ul>
+      </div>
+      <div id="view-surface" hidden>
+        <p class="takeaway" id="surface-takeaway"></p>
+        <div id="surface" class="chart"></div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>ATM term structure</h2>
+      <p class="takeaway" id="term-takeaway"></p>
+      <div id="term" class="chart small"></div>
+      <h2>25-delta skew</h2>
+      <p class="takeaway" id="skew-takeaway"></p>
+      <div id="skew" class="chart small"></div>
+    </section>
+    <section class="panel wide">
+      <h2>Static arbitrage</h2>
+      <div id="arb" class="table-wrap"></div>
+    </section>
+  </main>
 
-        ws.onmessage = function(event) {
-            var data = JSON.parse(event.data);
-
-            // Update Spot Price
-            document.getElementById('spot-price').innerText = "$" + data.spot.toFixed(2);
-
-            // Update Plot
-            // Skip points where the IV solver found no volatility (null z)
-            var keep = data.iv.map((z, i) => i).filter(i => data.iv[i] !== null);
-            var zs = keep.map(i => data.iv[i]);
-            var trace = {
-                x: keep.map(i => data.strike[i]),
-                y: keep.map(i => data.expiry_days[i]),
-                z: zs,
-                type: 'mesh3d',
-                intensity: zs,
-                colorscale: 'Viridis',
-                opacity: 0.8
-            };
-
-            Plotly.react(plotDiv, [trace], layout);
-
-            // Update Arb Feed
-            var arbDiv = document.getElementById('arb-feed');
-            arbDiv.innerHTML = ""; // Clear old
-            if (data.violations.length === 0) {
-                arbDiv.innerHTML = "<div style='color:#666'>No anomalies detected.</div>";
-            } else {
-                data.violations.forEach(arb => {
-                    var div = document.createElement('div');
-                    div.className = 'arb-alert';
-                    div.innerHTML = `<b>${arb.type}</b><br>Expiry: ${arb.expiry_days}d<br>Strikes: ${arb.strikes.join(', ')}<br>Size: ${arb.size.toFixed(4)}`;
-                    arbDiv.appendChild(div);
-                });
-            }
-        };
-    </script>
+  <script src="/static/charts.js"></script>
+  <script src="/static/dashboard.js"></script>
 </body>
 </html>

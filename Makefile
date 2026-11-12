@@ -18,7 +18,7 @@ e2e:
 lint:
 	$(BIN)/ruff check .
 	$(BIN)/ruff format --check .
-	$(BIN)/mypy engine.py
+	$(BIN)/mypy engine.py report.py
 
 run:
 	$(BIN)/python main.py

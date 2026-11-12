@@ -38,7 +38,7 @@ def test_deep_itm_with_time_value_recovers_sigma():
     assert abs(res.sigma - sigma) < 1e-6
 
 
-@settings(max_examples=300, deadline=None)
+@settings(max_examples=2000, deadline=None)
 @given(
     s=st.floats(50, 5000),
     moneyness=st.floats(0.5, 2),
@@ -76,3 +76,24 @@ def test_non_finite_inputs_are_rejected_not_raised():
         res = implied_volatility(*args, R, 1)
         assert math.isnan(res.sigma)
         assert res.reason == "invalid_input"
+
+
+@settings(max_examples=1000, deadline=None)
+@given(
+    s=st.floats(50, 5000),
+    moneyness=st.floats(0.5, 2),
+    t=st.floats(1 / 365, 2),
+    sigma=st.floats(0.05, 2),
+    q=st.floats(0, 0.05),
+)
+def test_call_and_parity_implied_put_agree_across_contracts(s, moneyness, t, sigma, q):
+    # Parity ties the two legs together, so any disagreement is solver error.
+    k = s * moneyness
+    if calculate_vega(s, k, t, R, sigma, q=q) <= 1e-4 * s:
+        return
+    call = black_scholes_price(s, k, t, R, sigma, 1, q=q)
+    put = call - s * math.exp(-q * t) + k * math.exp(-R * t)
+    iv_call = implied_volatility(call, s, k, t, R, 1, q=q)
+    iv_put = implied_volatility(put, s, k, t, R, -1, q=q)
+    assert iv_call.converged and iv_put.converged
+    assert abs(iv_call.sigma - iv_put.sigma) < 1e-8

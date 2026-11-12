@@ -119,9 +119,8 @@ def fit_svi(k, iv, T: float, weights=None, start: SVIParams | None = None) -> SV
         starts.append([w_min, 0.1 * float(w_mkt.max()) / span, rho0, float(k[np.argmin(w_mkt)]), 0.1 * span])
 
     best = None
-    for x0 in starts:
-        x0 = np.clip(x0, lo, hi)
-        res = least_squares(residuals, x0, bounds=(lo, hi), x_scale="jac", max_nfev=2000)
+    for x in starts:
+        res = least_squares(residuals, np.clip(x, lo, hi), bounds=(lo, hi), x_scale="jac", max_nfev=2000)
         if best is None or res.cost < best.cost:
             best = res
     assert best is not None

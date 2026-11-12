@@ -52,14 +52,14 @@ def analyze_chain(
     quotes = []
     for i, o in enumerate(chain):
         F = forward_of(o)
-        k = math.log(o["strike"] / F)
+        log_k = math.log(o["strike"] / F)
         quote = {
             "type": o["type"],
             "strike": o["strike"],
             "expiry": o["expiry"],
             "T": o["time_to_expiry"],
             "price": o["price"],
-            "k": k,
+            "k": log_k,
             "iv": _num(ivs.sigma[i]),
             "iterations": int(ivs.iterations[i]),
             "reason": ivs.reason[i],

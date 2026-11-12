@@ -1,44 +1,64 @@
 import math
 
 import numpy as np
+import pytest
 
-import simulator
-from engine import calculate_vega, implied_volatility
+from engine import CALL, PUT, black_scholes_price, implied_volatility
 from simulator import MarketSimulator
 
 
-def _noiseless(monkeypatch):
-    # Zero out the spot random walk and the IV jitter so the true sigma is known.
-    monkeypatch.setattr(simulator.np.random, "normal", lambda loc, scale: 0.0)
-    return MarketSimulator()
-
-
-def test_payload_prices_invert_to_the_simulated_smile(monkeypatch):
-    # The solver only sees (strike, price) from the payload, so the price must
-    # belong to that exact strike at full precision, or the surface is wrong.
-    sim = _noiseless(monkeypatch)
+def test_payload_prices_match_the_payload_strike_and_spot():
+    # The solver inverts what the payload says; if the price was computed for a different
+    # strike or rounded to cents, every recovered IV is off.
+    sim = MarketSimulator(seed=1, noise_sd=0.0)
     chain = sim.generate_tick()
-    checked = 0
-    S = chain.spot
-    for K, T, price in zip(chain.strike, chain.T, chain.price):
-        true_sigma = sim.base_vol + 1.5 * (K / S - 1) ** 2
-        if calculate_vega(S, K, T, sim.r, true_sigma) <= 1e-4 * S:
-            continue
-        res = implied_volatility(price, S, K, T, sim.r, 1)
-        assert res.converged, (K, T, res)
-        assert abs(res.sigma - true_sigma) < 1e-6, (K, T)
-        checked += 1
-    assert checked >= 60
+    for K, T, f, price, sigma in zip(chain.strike, chain.T, chain.flag, chain.price, sim.last_model_iv):
+        expected = black_scholes_price(chain.spot, K, T, chain.r, sigma, int(f))
+        assert price == pytest.approx(expected, rel=1e-12, abs=1e-12)
 
 
-def test_tick_size_rounds_prices_and_failures_are_explained(monkeypatch):
-    monkeypatch.setattr(simulator.np.random, "normal", lambda loc, scale: 0.0)
-    sim = MarketSimulator(tick_size=0.05)
+def test_solver_recovers_the_model_iv_of_every_quote():
+    sim = MarketSimulator(seed=1, noise_sd=0.0)
     chain = sim.generate_tick()
-    assert np.allclose(chain.price / 0.05, np.round(chain.price / 0.05), atol=1e-9)
-    reasons = {
-        implied_volatility(p, chain.spot, K, T, sim.r, 1).reason
-        for p, K, T in zip(chain.price, chain.strike, chain.T)
-    }
-    assert "zero_price" in reasons  # deep OTM 7-day calls round to 0.00
-    assert reasons <= {"ok", "zero_price", "at_or_below_intrinsic"}
+    for p, K, T, f, sigma in zip(chain.price, chain.strike, chain.T, chain.flag, sim.last_model_iv):
+        result = implied_volatility(p, chain.spot, K, T, chain.r, int(f))
+        assert result.converged and abs(result.sigma - sigma) < 1e-6
+
+
+def test_tick_size_rounds_prices_and_the_solver_explains_the_failures():
+    chain = MarketSimulator(seed=1, tick_size=0.05, noise_sd=0.0).generate_tick()
+    assert np.allclose(chain.price / 0.05, np.round(chain.price / 0.05))
+    results = [
+        implied_volatility(p, chain.spot, K, T, chain.r, int(f))
+        for p, K, T, f in zip(chain.price, chain.strike, chain.T, chain.flag)
+    ]
+    failed = [r for r in results if not r.converged]
+    assert failed, "tick rounding of 7-day wings should produce unsolvable quotes"
+    assert all(math.isnan(r.sigma) for r in failed)
+    assert {r.reason for r in failed} <= {"zero_price", "at_or_below_intrinsic", "outside_bracket"}
+    assert "zero_price" in {r.reason for r in failed}  # deep OTM 7-day options round to 0.00
+
+
+def test_same_seed_gives_the_same_chain():
+    a = MarketSimulator(seed=7).generate_tick()
+    b = MarketSimulator(seed=7).generate_tick()
+    assert np.array_equal(a.price, b.price)
+
+
+def test_surface_has_put_skew_and_rising_atm_term_structure():
+    # The point of the realistic simulator: smiles that differ by expiry and lean to the put side.
+    sim = MarketSimulator(seed=1, noise_sd=0.0)
+    sim.generate_tick()
+    atm = []
+    for days, params in sim.current_slices():
+        T = days / 365
+        down, zero, up = params.implied_vol(np.array([-0.05, 0.0, 0.05]), T)
+        assert down > up
+        atm.append(zero)
+    assert atm == sorted(atm) and atm[0] < atm[-1]
+
+
+def test_emits_calls_and_puts_at_every_strike_and_expiry():
+    chain = MarketSimulator(seed=1).generate_tick()
+    for flag in (CALL, PUT):
+        assert (chain.flag == flag).sum() == len(chain) // 2

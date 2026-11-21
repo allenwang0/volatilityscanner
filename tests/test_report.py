@@ -9,7 +9,7 @@ def test_report_builds_with_the_seed_label_and_no_nan(tmp_path):
     out = tmp_path / "index.html"
     report.main(["--seed", "7", "--out", str(out)])
     page = out.read_text()
-    assert "Simulated data, seed 7" in page
+    assert "Synthetic data: simulated option chain, seed 7." in page
     assert "NaN" not in page
     data = json.loads(
         re.search(

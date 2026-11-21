@@ -176,11 +176,12 @@ def build_card(report: dict[str, Any], command: str) -> dict[str, Any]:
 
 
 def _table(head: list[str], rows: list[list[str]]) -> str:
+    # Every report table is all numbers, so every column is right-aligned (class "num").
     th = "".join(f"<th scope='col'>{html.escape(h)}</th>" for h in head)
     body = "".join(
         "<tr>" + "".join(f"<td>{html.escape(c)}</td>" for c in row) + "</tr>" for row in rows
     )
-    return f"<table><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table>"
+    return f"<table class='num'><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table>"
 
 
 def render_html(report: dict[str, Any]) -> str:
@@ -191,14 +192,16 @@ def render_html(report: dict[str, Any]) -> str:
             "Options",
             "Scalar loop (ms)",
             "Vectorized (ms)",
+            "Speedup",
             "Brent fallback",
-            "Max diff, vega > 1e-4 S",
+            "Max diff, vega > 1e-4 S (S = spot)",
         ],
         [
             [
                 f"{b['n']:,}",
                 f"{b['scalar_ms']:.1f}",
                 f"{b['vectorized_ms']:.1f}",
+                f"{b['scalar_ms'] / b['vectorized_ms']:.1f}×",
                 f"{b['brent_share']:.1%}",
                 f"{b['max_abs_diff']:.1e}",
             ]
@@ -229,29 +232,45 @@ def render_html(report: dict[str, Any]) -> str:
     style = (HERE / "static" / "style.css").read_text()
     charts = (HERE / "static" / "charts.js").read_text()
     data = json.dumps(report, allow_nan=False).replace("</", "<\\/")
-    label = html.escape(report["label"])
+    repo = "https://github.com/allenwang0/volatilityscanner"
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Volatility Scanner Report</title>
+<title>Volatility Scanner report · Allen Wang</title>
+<script>try{{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}}catch(e){{}}</script>
 <script src="{PLOTLY}"></script>
 <style>{style}
+/* Report only: the shared allenwang0.github.io palette, font and 960px width. */
+:root {{ --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --bg: #fbfbf9; --ink: #111111; --muted: #5f5f63; --accent: #d70015; color-scheme: light; }}
+@media (prefers-color-scheme: dark) {{
+  :root:not([data-theme="light"]) {{ --bg: #0b0b0b; --panel: #141414; --ink: #f2f2ef; --muted: #a1a1a6; --accent: #ff5a4f; color-scheme: dark; }}
+}}
+:root[data-theme="dark"] {{ --bg: #0b0b0b; --panel: #141414; --ink: #f2f2ef; --muted: #a1a1a6; --accent: #ff5a4f; color-scheme: dark; }}
+body {{ max-width: 960px; }}
+.site-nav {{ display: flex; justify-content: space-between; gap: 16px; padding: 0 0 16px; font-size: 14px; }}
+.site-nav a {{ color: var(--muted); text-decoration: none; }}
+.site-nav a:hover {{ color: var(--ink); }}
+.synthetic {{ color: var(--muted); font-size: 14px; margin: 0 0 8px; }}
 .prose {{ max-width: 760px; color: var(--muted); font-size: 0.92rem; }}
-.label {{ font-weight: 600; color: var(--warn-ink); background: var(--warn-bg); padding: 2px 8px; border-radius: 4px; }}
+.prose a {{ color: inherit; }}
+.grid {{ align-items: start; }}
+table.num th, table.num td {{ text-align: right; font-variant-numeric: tabular-nums; }}
 </style>
 </head>
 <body>
+<nav class="site-nav" aria-label="Site"><a href="https://allenwang0.github.io/">← Allen Wang</a><a href="{repo}">Source</a></nav>
 <header>
   <h1>Volatility Scanner report</h1>
-  <span class="label" id="data-label">{label}</span>
   <div class="controls"><button type="button" id="theme">Theme</button></div>
 </header>
+<p class="synthetic" id="data-label">Synthetic data: simulated option chain, seed {report["seed"]}.</p>
 <p class="prose">One tick of the seeded simulator: {p["quotes_checked"]} quotes (calls and puts, 20 strikes,
 expiries {", ".join(f"{s['days']:g}" for s in p["slices"])} days), spot {p["spot"]:.2f}. Every number on this
-page comes from <code>python report.py --seed {report["seed"]}</code>; the live app streams the same
-analysis twice a second.</p>
+page comes from <code>python report.py --seed {report["seed"]}</code>. The dashboard in the repo
+runs locally (<a href="{repo}#run-it">see the README</a>) and streams the same analysis twice a second.</p>
 <main class="grid">
   <section class="panel">
     <h2>Smile per expiry</h2>
@@ -277,14 +296,14 @@ analysis twice a second.</p>
     g(k) is the Gatheral-Jacquier density on 201 points; negative means butterfly arbitrage.</p>
     <div class="table-wrap">{svi_rows}</div>
   </section>
-  <section class="panel">
+  <section class="panel wide">
     <h2>IV solver round trip</h2>
     <p class="takeaway" id="rt-takeaway">{rt["identifiable"]:,} of {ROUND_TRIP_CONTRACTS:,} random
     contracts have vega above 1e-4 S; max error {rt["max_error"]:.1e}, median {rt["median_error"]:.1e},
     {rt["unsolved_identifiable"]} unsolved. Exact recoveries (error 0) are drawn at -17.</p>
     <div id="hist" class="chart small"></div>
   </section>
-  <section class="panel">
+  <section class="panel wide">
     <h2>Vectorized solver benchmark</h2>
     <p class="takeaway">{html.escape(report["machine"])}, median of 5 runs.</p>
     <div class="table-wrap">{bench}</div>
@@ -317,15 +336,16 @@ analysis twice a second.</p>
     var grid = getComputedStyle(document.documentElement).getPropertyValue("--grid");
     Plotly.react($("hist"), [{{ type: "histogram", x: report.round_trip.log10_error, marker: {{ color: "#0072B2" }},
       hovertemplate: "log10 error %{{x}}<br>%{{y}} contracts<extra></extra>" }}], {{
-      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: {{ color: ink }},
+      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: {{ color: ink, family: getComputedStyle(document.documentElement).getPropertyValue("--font") }},
       margin: {{ l: 56, r: 12, t: 8, b: 48 }}, bargap: 0.05,
-      xaxis: {{ title: {{ text: "log10 |sigma_hat - sigma|" }}, gridcolor: grid }},
+      xaxis: {{ title: {{ text: "log10 |σ̂ − σ|" }}, gridcolor: grid }},
       yaxis: {{ title: {{ text: "Contracts" }}, gridcolor: grid }} }}, {{ responsive: true, displaylogo: false }});
   }}
   $("theme").addEventListener("click", function () {{
     var root = document.documentElement;
     var dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
     root.dataset.theme = dark ? "light" : "dark";
+    try {{ localStorage.setItem("theme", root.dataset.theme); }} catch (e) {{ /* not saved; still applied */ }}
     draw();
   }});
   draw();
@@ -346,7 +366,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     report = build(args.seed)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(render_html(report))
+    args.out.write_text(render_html(report), encoding="utf-8")
     print(f"wrote {args.out}")
     if args.card:
         command = shlex.join(["python", "report.py", *(sys.argv[1:] if argv is None else argv)])

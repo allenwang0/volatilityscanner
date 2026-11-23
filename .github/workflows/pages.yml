@@ -1,9 +1,10 @@
 name: Pages
 
+# Publishes the report exactly as committed: docs/index.html is built by
+# scripts/build_report.py from results/ and checked for staleness here and in CI.
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,11 +20,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e .
-      - run: python report.py --seed 7 --out docs/index.html
+      - name: Report kit matches its pinned hashes
+        run: python report-kit/check_kit.py
+      - name: Committed report matches the committed results
+        run: |
+          python scripts/build_report.py
+          git diff --exit-code -- docs
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs

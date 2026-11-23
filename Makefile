@@ -22,3 +22,7 @@ lint:
 
 run:
 	$(BIN)/python main.py
+
+report:
+	$(BIN)/python report.py --seed 7 --card site/card.json
+	$(BIN)/python scripts/build_report.py --readme README.md

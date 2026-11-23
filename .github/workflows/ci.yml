@@ -12,10 +12,18 @@ jobs:
         python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the report links each source file at the commit that last changed it
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
+      - name: Report kit matches its pinned hashes
+        run: python report-kit/check_kit.py
+      - name: Committed report and README Highlights are current
+        run: |
+          python scripts/build_report.py --readme README.md
+          git diff --exit-code -- docs README.md
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy engine.py report.py

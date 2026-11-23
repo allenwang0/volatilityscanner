@@ -42,6 +42,8 @@ py-modules = ["engine", "arbitrage", "svi", "surface", "simulator", "main", "liv
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Vendored byte-identical from the shared report kit; checked by report-kit/check_kit.py.
+extend-exclude = ["report-kit"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "NPY"]
@@ -52,6 +54,8 @@ ignore = ["B905"]
 "bench/bench_iv.py" = ["B023"]
 # The report is an HTML template; its long lines are page content.
 "report.py" = ["E501"]
+# The page generator's long lines are page copy.
+"scripts/build_report.py" = ["E501", "E731"]
 
 [tool.mypy]
 python_version = "3.11"

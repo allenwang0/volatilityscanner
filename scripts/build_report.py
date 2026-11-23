@@ -169,10 +169,66 @@ def git_last_commit(rel):
     return out or None
 
 
+# ---------------------------------------------------------------- platforms
+
+PLATFORMS = (
+    ("results/report.json", "macOS arm64"),
+    ("results/report.linux-x86_64.json", "Linux x86_64"),
+)
+
+
+def check_platforms(res, alt):
+    """Refuse to publish a number that differs between the committed platform runs.
+
+    Counts, the hero error and the arbitrage sweep must be identical; SVI values must
+    agree at the precision the page shows them. Below-cutoff errors are allowed to
+    differ (sigma is not identifiable there) and are shown as ranges.
+    """
+    a, b = res["round_trip"], alt["round_trip"]
+    exact = (
+        "contracts",
+        "identifiable",
+        "unsolved_identifiable",
+        "unidentifiable_solved",
+        "zero_vega",
+        "max_error",
+        "median_error",
+    )
+    for key in exact:
+        if a[key] != b[key]:
+            raise ValueError(f"round_trip.{key} differs across platforms: {a[key]} vs {b[key]}")
+    for x, y in zip(a["by_vega_decade"], b["by_vega_decade"], strict=True):
+        if (x["contracts"], x["solved"]) != (y["contracts"], y["solved"]):
+            raise ValueError(f"bin {x['vega_over_spot_lo']} counts differ across platforms")
+    if f"{a['brent_share']:.0%}" != f"{b['brent_share']:.0%}":
+        raise ValueError("Brent share differs at displayed precision")
+    if res["noise_sweep"] != alt["noise_sweep"] or res["tick"] != alt["tick"]:
+        raise ValueError("arbitrage results differ across platforms")
+    shown = (
+        ("rmse_vol_points", ".3f"),
+        ("held_out_rmse_vol_points", ".3f"),
+        ("atm_iv", ".1%"),
+        ("skew_25d", ".2f"),
+    )
+    for x, y in zip(res["slices"], alt["slices"], strict=True):
+        for key, f in shown:
+            if format(x[key], f) != format(y[key], f):
+                raise ValueError(f"{x['days']}-day {key} differs at displayed precision")
+
+
+def err_range(values):
+    """One significant figure; a range when platforms disagree at that precision."""
+    vals = sorted(v for v in values if v is not None)
+    if not vals:
+        return "—"
+    lo, hi = sci(vals[0], 1), sci(vals[-1], 1)
+    return lo if lo == hi else f"{lo} to {hi}"
+
+
 # ---------------------------------------------------------------- derived numbers
 
 
-def derive(res, bench, facts):
+def derive(res, bench, facts, alt=None):
     rt = res["round_trip"]
     slices = {round(s["days"]): s for s in res["slices"]}
     monthly = min(res["slices"], key=lambda s: abs(s["days"] - 30))
@@ -180,6 +236,18 @@ def derive(res, bench, facts):
     usable_bins = [b for b in rt["by_vega_decade"] if b["vega_over_spot_lo"] >= rt["usable_vega"]]
     below = [b for b in rt["by_vega_decade"] if b["vega_over_spot_hi"] <= rt["usable_vega"]]
     worst_below = max(b["max_error"] for b in below if b["max_error"] is not None)
+    if alt:
+        alt_below = [
+            b
+            for b in alt["round_trip"]["by_vega_decade"]
+            if b["vega_over_spot_hi"] <= rt["usable_vega"]
+        ]
+        worst_below = max(
+            worst_below, *(b["max_error"] for b in alt_below if b["max_error"] is not None)
+        )
+    worst_below = float(
+        f"{worst_below:.1g}"
+    )  # platform-dependent below the cutoff: one significant figure
     sweep = sorted(res["noise_sweep"], key=lambda r: r["noise_sd"])
     return {
         "usable": rt["identifiable"],
@@ -424,7 +492,7 @@ def evidence_rows(res, bench, d, facts, shas):
         (
             "E1",
             f"{d['solved']:,} of {d['usable']:,} usable contracts solved; largest error {sci(d['max_err'])}",
-            "results/report.json → round_trip",
+            "results/report.json → round_trip (identical in results/report.linux-x86_64.json)",
             blob("results/report.json"),
             "Verified",
         ),
@@ -505,9 +573,10 @@ def hero_media():
     )
 
 
-def build_page(res, bench, shas):
+def build_page(res, bench, shas, alt):
+    check_platforms(res, alt)
     facts = facts_from_sources()
-    d = derive(res, bench, facts)
+    d = derive(res, bench, facts, alt)
     rt = res["round_trip"]
     R = rk.ref
     ev = evidence_rows(res, bench, d, facts, shas)
@@ -694,7 +763,7 @@ def build_page(res, bench, shas):
     err_fig = rk.figure(
         "fig-iv-error",
         f"Above the vega cutoff every error is below {pow10(math.ceil(math.log10(d['usable_bin_max'])))}; "
-        f"below it, errors reach {d['worst_below']:.2f}",
+        f"below it, errors reach about {d['worst_below']:g}",
         rk.variants(
             error_chart(rt, "err-d", 1000),
             error_chart(rt, "err-t", 640),
@@ -707,7 +776,10 @@ def build_page(res, bench, shas):
                 f"strike {ranges['moneyness'][0]:g}–{ranges['moneyness'][1]:g}× spot, 1 day to {ranges['years'][1]:g} years, "
                 f"σ {ranges['sigma'][0]:.0%}–{ranges['sigma'][1]:.0%}, dividend yield up to {ranges['dividend'][1]:.0%}, "
                 f"rate {rt['rate']:.0%}. Each point is one decade of vega ÷ spot; the shaded column pools everything below "
-                f"{pow10(round(math.log10(rt['by_vega_decade'][1]['vega_over_spot_lo'])))}. Single seeded run.{R('E1')}"
+                f"{pow10(round(math.log10(rt['by_vega_decade'][1]['vega_over_spot_lo'])))}. Single seeded run, plotted from "
+                f"{PLATFORMS[0][1]}; the counts and the largest usable-vega error are identical on {PLATFORMS[1][1]}, while "
+                f"errors where σ is not identifiable depend on the platform's floating point, so the table shows their range "
+                f"across both.{R('E1')}"
             ),
         ),
         question="How close is the solved volatility to the one that priced the option, and where does that break down?",
@@ -721,10 +793,12 @@ def build_page(res, bench, shas):
                     else f"{pow10(round(math.log10(b['vega_over_spot_lo'])))}–{pow10(round(math.log10(b['vega_over_spot_hi'])))}",
                     f"{b['contracts']:,}",
                     f"{b['solved']:,}",
-                    f"{b['max_error']:.1e}" if b["max_error"] is not None else "—",
-                    f"{b['median_error']:.1e}" if b["median_error"] is not None else "—",
+                    err_range([b["max_error"], o["max_error"]]),
+                    err_range([b["median_error"], o["median_error"]]),
                 ]
-                for b in rt["by_vega_decade"]
+                for b, o in zip(
+                    rt["by_vega_decade"], alt["round_trip"]["by_vega_decade"], strict=True
+                )
             ],
             numeric={1, 2, 3, 4},
         ),
@@ -757,7 +831,7 @@ def build_page(res, bench, shas):
                 "p",
                 Raw(
                     f"Below the cutoff the price carries almost no information about σ. Of the {d['unusable']:,} such contracts, "
-                    f"{d['unusable_solved']:,} still returned a value, with errors up to {d['worst_below']:.2f} in σ: a root "
+                    f"{d['unusable_solved']:,} still returned a value, with errors up to about {d['worst_below']:g} in σ: a root "
                     f"that reproduces the price, but not the volatility that set it. The cutoff is applied in tests and in this "
                     f"measurement; the dashboard does not flag these quotes."
                 ),
@@ -994,6 +1068,12 @@ def build_page(res, bench, shas):
                 f"{res['tick']['quotes_checked']} quotes from SVI_TABLE plus N(0, {facts['noise_sd']:g}) IV noise, seed {res['seed']}",
             ),
             (
+                "Platforms",
+                f"Accuracy, fit and arbitrage results computed on {PLATFORMS[0][1]} and {PLATFORMS[1][1]} (Docker "
+                f"python:3.12) with the NumPy and SciPy versions pinned in pyproject.toml; every number shown agrees at "
+                f"its displayed precision, except errors below the vega cutoff, shown as ranges",
+            ),
+            (
                 "Error measure",
                 "|solved σ − true σ|, where true σ priced the contract; usable = vega > "
                 f"{rt['usable_vega']:g} × spot, computed at the true σ",
@@ -1047,7 +1127,7 @@ def build_page(res, bench, shas):
             (
                 "Low-vega quotes are not flagged.",
                 f"Below vega {cut} × spot a returned σ can be off by up to "
-                f"{d['worst_below']:.2f}; the dashboard shows it like any other.",
+                f"about {d['worst_below']:g}; the dashboard shows it like any other.",
             ),
             (
                 "European pricing.",
@@ -1082,6 +1162,11 @@ def build_page(res, bench, shas):
                 ".venv/bin/python report.py --seed 7 --card site/card.json",
             ),
             (
+                "The same on Linux x86_64 (Docker), for the cross-platform file.",
+                "docker run --rm --platform linux/amd64 -v $PWD:/w -w /w python:3.12 sh -c \\\n"
+                "  'pip install -q . && python report.py --seed 7 --results results/report.linux-x86_64.json'",
+            ),
+            (
                 "Re-run the timing benchmark (about a minute).",
                 ".venv/bin/python -m bench.bench_iv --json results/bench_iv.json",
             ),
@@ -1101,7 +1186,7 @@ def build_page(res, bench, shas):
     )
     repro_sec = rk.section(
         "reproduce",
-        "Reproduce it in five commands",
+        "Reproduce every result from a clean clone",
         steps_html,
         eyebrow="Reproduce",
         intro=Raw(f'Commands run from a clone of <a class="src" href="{REPO_URL}">{REPO}</a>.'),
@@ -1204,8 +1289,10 @@ def main():
     parser.add_argument("--readme", help="rewrite the Highlights block between the README markers")
     args = parser.parse_args()
     res, bench = load(ROOT / args.results), load(ROOT / args.bench)
+    alt = load(ROOT / PLATFORMS[1][0])
     cited = [
         "results/report.json",
+        "results/report.linux-x86_64.json",
         "results/bench_iv.json",
         "report.py",
         "bench/bench_iv.py",
@@ -1218,7 +1305,7 @@ def main():
     shas = {rel: git_last_commit(rel) for rel in cited}
     out = ROOT / args.out
     os.makedirs(out.parent, exist_ok=True)
-    out.write_text(build_page(res, bench, shas), encoding="utf-8")
+    out.write_text(build_page(res, bench, shas, alt), encoding="utf-8")
     if args.readme:
         update_readme(ROOT / args.readme, res, bench)
 

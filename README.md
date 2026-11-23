@@ -2,13 +2,15 @@
 
 A live options scanner: it streams an option chain, works out the implied volatility (the volatility the market price implies) of every quote, fits a smooth curve per expiry and flags prices that would allow risk-free profit. It runs as a web dashboard that updates twice a second.
 
-![Static report: smiles, term structure, skew, arbitrage table and fit quality](docs/assets/report.png)
+![Report: false alarms by quote noise, SVI residuals](docs/assets/report.png)
+
+[Report](https://allenwang0.github.io/volatilityscanner/)
 
 ## Highlights
 
 - **Robust implied-volatility solver:** price-bound checks, a smart starting guess, Newton steps with a Brent fallback. On 10,000 random contracts, every one with usable sensitivity solves, with max error 2.5e-12.
-- **SVI curve fits** (a standard volatility-smile model) checked for arbitrage, with 0.017 to 0.032 volatility points of error on the simulated chain.
-- **Five no-arbitrage checks,** each sized in dollars and compared with the cost of crossing the bid-ask spread.
+- **SVI curve fits** (a standard volatility-smile model) checked for arbitrage, with 0.017–0.032 vol points of error in-sample and 0.021–0.114 held out (simulated chain).
+- **Five no-arbitrage checks,** each sized in dollars and compared with the cost of crossing the bid-ask spread. At 0.0005 IV noise per quote they fire on 85% of simulated ticks.
 - **WebSocket server** where a slow client skips to the newest update instead of slowing everyone else.
 
 ## Run it
@@ -29,6 +31,6 @@ make setup PYTHON=python3.12
 
 ## Limitations
 
-- The headline numbers come from the simulator, not market data.
+- The headline numbers come from the simulator, not market data. Its smiles are SVI-shaped, so SVI fits by design.
 - Black-Scholes assumes European exercise; SPY options are American, so some prices are only approximately right.
 - Yahoo quotes are delayed and not synchronized across strikes.

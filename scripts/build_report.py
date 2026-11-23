@@ -30,6 +30,7 @@ PAGE_URL = "https://allenwang0.github.io/volatilityscanner/"
 HOME_URL = "https://allenwang0.github.io/"
 README_START = "<!-- results:start -->"
 README_END = "<!-- results:end -->"
+X_SPOT = f"×{rk.NBSP}spot"
 SUP = str.maketrans("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹")
 CHECK_TEXT = {
     "monotonicity": ("Call prices fall as strike rises", "a higher strike can never be worth more"),
@@ -497,7 +498,7 @@ def evidence_rows(res, bench, d, facts, shas):
         ),
         (
             "E2",
-            f"Usable means vega > {res['round_trip']['usable_vega']:g} × spot; contract ranges and seed",
+            f"Usable means vega > {rk.num(format(res['round_trip']['usable_vega'], 'g'), X_SPOT)}; contract ranges and seed",
             f"bench/bench_iv.py:{usable[0]}; report.py:{rt_lines[0]}–{rt_lines[1]}",
             blob("report.py", *rt_lines),
             "Verified",
@@ -598,7 +599,7 @@ def build_page(res, bench, shas, alt):
         ),
         support=Raw(
             f"<b>Usable vega</b> means the option's price still responds to volatility: vega above "
-            f"{cut} × spot. Below that, many volatilities give the same price to machine precision, so the "
+            f"{rk.num(cut, X_SPOT)}. Below that, many volatilities give the same price to machine precision, so the "
             f"price cannot pin one down.{R('E2')}"
         ),
         context=(
@@ -1068,7 +1069,7 @@ def build_page(res, bench, shas, alt):
             (
                 "Error measure",
                 "|solved σ − true σ|, where true σ priced the contract; usable = vega > "
-                f"{rt['usable_vega']:g} × spot, computed at the true σ",
+                f"{rk.num(format(rt['usable_vega'], 'g'), X_SPOT)}, computed at the true σ",
             ),
             (
                 "Fit measure",
@@ -1118,7 +1119,7 @@ def build_page(res, bench, shas, alt):
             ),
             (
                 "Low-vega quotes are not flagged.",
-                f"Below vega {cut} × spot a returned σ can be off by up to "
+                f"Below vega {rk.num(cut, X_SPOT)} a returned σ can be off by up to "
                 f"about {d['worst_below']:g}; the dashboard shows it like any other.",
             ),
             (

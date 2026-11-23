@@ -25,8 +25,9 @@ def _sig1(x):
 def _assert_same_as_published(fresh, committed, alt):
     """Fresh results must match what the page shows, at the precision it shows them.
 
-    Counts, the hero error and the arbitrage sweep are deterministic across platforms
-    and compared exactly. SVI values are compared at their displayed precision. Errors
+    Counts and the arbitrage sweep are compared exactly. The hero and median errors are
+    compared at the two significant figures the page shows (their last bits differ between
+    macOS arm64 and a real Linux x86_64 runner), and SVI values at their displayed precision. Errors
     below the usable-vega cutoff depend on the platform's floating point (sigma is not
     identifiable there), so a fresh value only has to land within one decade of the
     committed platform range; usable-vega bins must agree to one significant figure.
@@ -38,10 +39,12 @@ def _assert_same_as_published(fresh, committed, alt):
         "unsolved_identifiable",
         "unidentifiable_solved",
         "zero_vega",
-        "max_error",
-        "median_error",
     ):
         assert a[key] == c[key], f"round_trip.{key}: {a[key]} vs committed {c[key]}"
+    for key in ("max_error", "median_error"):
+        assert f"{a[key]:.1e}" == f"{c[key]:.1e}", (
+            f"round_trip.{key}: {a[key]} vs committed {c[key]}"
+        )
     assert f"{a['brent_share']:.0%}" == f"{c['brent_share']:.0%}"
     assert fresh["tick"] == committed["tick"] and fresh["noise_sweep"] == committed["noise_sweep"]
     shown = (
@@ -81,9 +84,11 @@ def test_committed_results_match_a_fresh_run(tmp_path):
     _assert_same_as_published(json.loads(out.read_text()), committed, alt)
 
 
-def test_hero_numbers_are_identical_on_both_committed_platforms():
-    # The hero must not depend on the machine: both committed runs give the same bits.
+def test_hero_numbers_agree_at_displayed_precision_on_both_committed_platforms():
+    # The hero must not depend on the machine: both committed runs show the same digits.
     mac, linux = (json.loads((RESULTS / f).read_text())["round_trip"] for f in PLATFORM_FILES)
-    assert mac["max_error"] == linux["max_error"] and math.isfinite(mac["max_error"])
+    assert f"{mac['max_error']:.1e}" == f"{linux['max_error']:.1e}" and math.isfinite(
+        mac["max_error"]
+    )
     assert mac["identifiable"] == linux["identifiable"]
     assert mac["unsolved_identifiable"] == linux["unsolved_identifiable"] == 0

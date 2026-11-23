@@ -180,9 +180,10 @@ PLATFORMS = (
 def check_platforms(res, alt):
     """Refuse to publish a number that differs between the committed platform runs.
 
-    Counts, the hero error and the arbitrage sweep must be identical; SVI values must
-    agree at the precision the page shows them. Below-cutoff errors are allowed to
-    differ (sigma is not identifiable there) and are shown as ranges.
+    Counts and the arbitrage sweep must be identical; the hero and median errors (two
+    significant figures) and SVI values must agree at the precision the page shows them.
+    Below-cutoff errors are allowed to differ (sigma is not identifiable there) and are
+    shown as ranges.
     """
     a, b = res["round_trip"], alt["round_trip"]
     exact = (
@@ -191,12 +192,15 @@ def check_platforms(res, alt):
         "unsolved_identifiable",
         "unidentifiable_solved",
         "zero_vega",
-        "max_error",
-        "median_error",
     )
     for key in exact:
         if a[key] != b[key]:
             raise ValueError(f"round_trip.{key} differs across platforms: {a[key]} vs {b[key]}")
+    for key in ("max_error", "median_error"):
+        if f"{a[key]:.1e}" != f"{b[key]:.1e}":
+            raise ValueError(
+                f"round_trip.{key} differs at displayed precision: {a[key]} vs {b[key]}"
+            )
     for x, y in zip(a["by_vega_decade"], b["by_vega_decade"], strict=True):
         if (x["contracts"], x["solved"]) != (y["contracts"], y["solved"]):
             raise ValueError(f"bin {x['vega_over_spot_lo']} counts differ across platforms")
@@ -492,7 +496,7 @@ def evidence_rows(res, bench, d, facts, shas):
         (
             "E1",
             f"{d['solved']:,} of {d['usable']:,} usable contracts solved; largest error {sci(d['max_err'])}",
-            "results/report.json → round_trip (identical in results/report.linux-x86_64.json)",
+            "results/report.json → round_trip (same at the displayed precision in results/report.linux-x86_64.json)",
             blob("results/report.json"),
             "Verified",
         ),
@@ -770,7 +774,8 @@ def build_page(res, bench, shas, alt):
                 f"σ {ranges['sigma'][0]:.0%}–{ranges['sigma'][1]:.0%}, dividend yield up to {ranges['dividend'][1]:.0%}, "
                 f"rate {rt['rate']:.0%}. Each point is one decade of vega ÷ spot; the shaded column pools everything below "
                 f"{pow10(round(math.log10(rt['by_vega_decade'][1]['vega_over_spot_lo'])))}. Single seeded run, plotted from "
-                f"{PLATFORMS[0][1]}; the counts and the largest usable-vega error are identical on {PLATFORMS[1][1]}, while "
+                f"{PLATFORMS[0][1]}; the counts are identical on {PLATFORMS[1][1]} and the largest usable-vega error agrees at the "
+                f"displayed precision, while "
                 f"errors where σ is not identifiable depend on the platform's floating point, so the table shows their range "
                 f"across both.{R('E1')}"
             ),
@@ -1063,7 +1068,7 @@ def build_page(res, bench, shas, alt):
             (
                 "Platforms",
                 f"Accuracy, fit and arbitrage results computed on {PLATFORMS[0][1]} and {PLATFORMS[1][1]} (Docker "
-                f"python:3.12) with the NumPy and SciPy versions pinned in pyproject.toml; every number shown agrees at "
+                f"python:3.12, emulated on Apple silicon) with the NumPy and SciPy versions pinned in pyproject.toml; every number shown agrees at "
                 f"its displayed precision, except errors below the vega cutoff, shown as ranges",
             ),
             (

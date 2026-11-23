@@ -1,10 +1,12 @@
-"""Build the static report (and optionally the portfolio card) from one seeded run.
+"""Compute the report's results (and optionally the portfolio card) from one seeded run.
 
-python report.py --seed 7 --out docs/index.html --card site/card.json
+python report.py --seed 7 --results results/report.json --card site/card.json
+
+The page itself is rendered from the committed results by scripts/build_report.py.
+Solver timings come from bench/bench_iv.py (results/bench_iv.json), not from here.
 """
 
 import argparse
-import html
 import json
 import shlex
 import subprocess
@@ -15,42 +17,74 @@ from typing import Any
 
 import numpy as np
 
-from bench.bench_iv import BenchRow, machine
-from bench.bench_iv import run as run_benchmark
+from bench.bench_iv import USABLE_VEGA
 from engine import CALL, PUT, black_scholes_price_vec, implied_volatility_vec, vega_vec
 from main import build_payload
-from simulator import MarketSimulator
+from simulator import IV_NOISE_SD, SIM_STRIKES, MarketSimulator
 from surface import otm_mask
 from svi import fit_svi
 
 HERE = Path(__file__).parent
-PLOTLY = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 ROUND_TRIP_CONTRACTS = 10_000
 NOISE_LEVELS = (0.0002, 0.0005, 0.001, 0.002)
 NOISE_TICKS = 40
+# Round-trip contract ranges (uniform draws): spot, K/S, years, sigma, dividend yield; fixed rate.
+ROUND_TRIP_RANGES = {
+    "spot": (50.0, 5000.0),
+    "moneyness": (0.5, 2.0),
+    "years": (1 / 365, 2.0),
+    "sigma": (0.05, 2.0),
+    "dividend": (0.0, 0.05),
+}
+ROUND_TRIP_RATE = 0.03
+VEGA_FLOOR_DECADE = -15  # vega/S below 1e-15 shares one bin (some draws reach 1e-245)
 CARD_EXPIRY_DAYS = 30
 CARD_FIT_POINTS = 101
 
 
 def round_trip_errors(seed: int) -> dict[str, Any]:
-    """Price random contracts exactly, solve them back, and bin log10 |sigma_hat - sigma|."""
+    """Price random contracts exactly, solve them back, and bin |sigma_hat - sigma| by vega/S."""
     rng = np.random.default_rng(seed)
     n = ROUND_TRIP_CONTRACTS
-    S = rng.uniform(50, 5000, n)
-    K = S * rng.uniform(0.5, 2.0, n)
-    T = rng.uniform(1 / 365, 2.0, n)
-    sigma = rng.uniform(0.05, 2.0, n)
-    q = rng.uniform(0.0, 0.05, n)
+    R = ROUND_TRIP_RANGES
+    S = rng.uniform(*R["spot"], n)
+    K = S * rng.uniform(*R["moneyness"], n)
+    T = rng.uniform(*R["years"], n)
+    sigma = rng.uniform(*R["sigma"], n)
+    q = rng.uniform(*R["dividend"], n)
     flag = rng.choice([CALL, PUT], n).astype(float)
-    r = 0.03
+    r = ROUND_TRIP_RATE
     price = black_scholes_price_vec(S, K, T, r, sigma, flag, q)
     solved = implied_volatility_vec(price, S, K, T, r, flag, q)
-    identifiable = vega_vec(S, K, T, r, sigma, q) > 1e-4 * S
+    rel_vega = vega_vec(S, K, T, r, sigma, q) / S
+    identifiable = rel_vega > USABLE_VEGA
     err = np.abs(solved.sigma - sigma)
     ok = identifiable & np.isfinite(err)
-    log_err = np.log10(np.maximum(err[ok], 1e-17))
+    finite = np.isfinite(err)
+    bins = []
+    top = int(np.ceil(np.log10(rel_vega.max())))
+    for e in range(VEGA_FLOOR_DECADE - 1, top):
+        lo = 0.0 if e < VEGA_FLOOR_DECADE else 10.0**e  # first bin: everything below the floor
+        m = (rel_vega >= lo) & (rel_vega < 10.0 ** (e + 1))
+        hit = m & finite
+        bins.append(
+            {
+                "vega_over_spot_lo": lo,
+                "vega_over_spot_hi": 10.0 ** (e + 1),
+                "contracts": int(m.sum()),
+                "solved": int(hit.sum()),
+                "max_error": float(err[hit].max()) if hit.any() else None,
+                "median_error": float(np.median(err[hit])) if hit.any() else None,
+            }
+        )
     return {
-        "log10_error": np.round(log_err, 3).tolist(),
+        "contracts": n,
+        "ranges": {key: list(value) for key, value in R.items()},
+        "rate": r,
+        "usable_vega": USABLE_VEGA,
+        "zero_vega": int((rel_vega == 0).sum()),
+        "unidentifiable_solved": int((~identifiable & finite).sum()),
+        "by_vega_decade": bins,
         "identifiable": int(identifiable.sum()),
         "unsolved_identifiable": int((identifiable & ~np.isfinite(err)).sum()),
         "max_error": float(err[ok].max()),
@@ -59,7 +93,7 @@ def round_trip_errors(seed: int) -> dict[str, Any]:
     }
 
 
-def held_out_rmse(chain, iv) -> dict[float, float]:
+def held_out_rmse(chain, iv) -> dict[float, dict[str, float]]:
     """Per expiry: fit SVI on two thirds of the solved OTM quotes, RMSE (vol points) on the rest."""
     otm = otm_mask(chain)
     vega = vega_vec(chain.spot, chain.strike, chain.T, chain.r, np.where(np.isfinite(iv), iv, 0.2))
@@ -72,7 +106,11 @@ def held_out_rmse(chain, iv) -> dict[float, float]:
         train = np.arange(len(idx)) % 3 != 0
         fit = fit_svi(k[train], iv[idx][train], T, vega[idx][train])
         resid = fit.params.implied_vol(k[~train], T) - iv[idx][~train]
-        out[float(days)] = float(np.sqrt(np.mean(resid**2)) * 100)
+        out[float(days)] = {
+            "rmse_vol_points": float(np.sqrt(np.mean(resid**2)) * 100),
+            "train_quotes": int(train.sum()),
+            "test_quotes": int((~train).sum()),
+        }
     return out
 
 
@@ -101,16 +139,51 @@ def build(seed: int) -> dict[str, Any]:
     iv = np.array([np.nan if v is None else v for v in payload["iv"]])
     held_out = held_out_rmse(chain, iv)
     for s in payload["slices"]:
-        s["held_out_rmse_vol_points"] = held_out[s["days"]]
-    bench: list[BenchRow] = run_benchmark(seed)
+        h = held_out[s["days"]]
+        s["held_out_rmse_vol_points"] = h["rmse_vol_points"]
+        s["held_out_train_quotes"] = h["train_quotes"]
+        s["held_out_test_quotes"] = h["test_quotes"]
     return {
         "seed": seed,
         "label": f"Simulated data, seed {seed}",
         "payload": payload,
-        "benchmark": [row.__dict__ for row in bench],
-        "machine": machine(),
         "round_trip": round_trip_errors(seed),
         "noise_sweep": noise_sweep(seed),
+    }
+
+
+def results(report: dict[str, Any]) -> dict[str, Any]:
+    """The committed summary the page is rendered from (no per-quote arrays)."""
+    p = report["payload"]
+    keep = (
+        "days",
+        "forward",
+        "atm_iv",
+        "skew_25d",
+        "rmse_vol_points",
+        "held_out_rmse_vol_points",
+        "held_out_train_quotes",
+        "held_out_test_quotes",
+        "min_density_g",
+    )
+    return {
+        "seed": report["seed"],
+        "label": report["label"],
+        "simulator": {
+            "spot": p["spot"],
+            "strikes": len(SIM_STRIKES),
+            "strike_range": [float(SIM_STRIKES[0]), float(SIM_STRIKES[-1])],
+            "iv_noise_sd": IV_NOISE_SD,
+        },
+        "tick": {
+            "quotes_checked": p["quotes_checked"],
+            "conditions_checked": p["conditions_checked"],
+            "violations": p["violations"],
+            "unsolved": sum(v is None for v in p["iv"]),
+        },
+        "slices": [{key: s[key] for key in keep} for s in p["slices"]],
+        "round_trip": report["round_trip"],
+        "noise_sweep": report["noise_sweep"],
     }
 
 
@@ -142,8 +215,8 @@ def build_card(report: dict[str, Any], command: str) -> dict[str, Any]:
     ).stdout.strip()
     days = round(s["days"])
     takeaway = (
-        f"SVI fits the {days}-day simulated smile to {s['rmse_vol_points']:.2f} vol points RMSE; "
-        f"25-delta skew is {s['skew_25d']:.1f} vol points."
+        f"SVI recovers the {days}-day simulated smile to {s['rmse_vol_points']:.2f} vol points RMSE, "
+        f"the level of the {IV_NOISE_SD * 100:.2f}-point noise added to it."
     )
     return {
         "schema_version": 1,
@@ -175,199 +248,18 @@ def build_card(report: dict[str, Any], command: str) -> dict[str, Any]:
     }
 
 
-def _table(head: list[str], rows: list[list[str]]) -> str:
-    # Every report table is all numbers, so every column is right-aligned (class "num").
-    th = "".join(f"<th scope='col'>{html.escape(h)}</th>" for h in head)
-    body = "".join(
-        "<tr>" + "".join(f"<td>{html.escape(c)}</td>" for c in row) + "</tr>" for row in rows
-    )
-    return f"<table class='num'><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table>"
-
-
-def render_html(report: dict[str, Any]) -> str:
-    p = report["payload"]
-    rt = report["round_trip"]
-    bench = _table(
-        [
-            "Options",
-            "Scalar loop (ms)",
-            "Vectorized (ms)",
-            "Speedup",
-            "Brent fallback",
-            "Max diff, vega > 1e-4 S (S = spot)",
-        ],
-        [
-            [
-                f"{b['n']:,}",
-                f"{b['scalar_ms']:.1f}",
-                f"{b['vectorized_ms']:.1f}",
-                f"{b['scalar_ms'] / b['vectorized_ms']:.1f}×",
-                f"{b['brent_share']:.1%}",
-                f"{b['max_abs_diff']:.1e}",
-            ]
-            for b in report["benchmark"]
-        ],
-    )
-    svi_rows = _table(
-        ["Expiry", "ATM IV", "25-delta skew", "SVI RMSE", "Held-out RMSE", "min g(k)"],
-        [
-            [
-                f"{s['days']:g} days",
-                f"{s['atm_iv']:.2%}",
-                f"{s['skew_25d']:.2f} vol pts",
-                f"{s['rmse_vol_points']:.3f} vol pts",
-                f"{s['held_out_rmse_vol_points']:.3f} vol pts",
-                f"{s['min_density_g']:.3f}",
-            ]
-            for s in p["slices"]
-        ],
-    )
-    noise = _table(
-        ["IV noise sd", "Violations per tick", "Ticks with a violation"],
-        [
-            [f"{n['noise_sd']:.4f}", f"{n['per_tick']:.2f}", f"{n['share_of_ticks']:.0%}"]
-            for n in report["noise_sweep"]
-        ],
-    )
-    style = (HERE / "static" / "style.css").read_text()
-    charts = (HERE / "static" / "charts.js").read_text()
-    data = json.dumps(report, allow_nan=False).replace("</", "<\\/")
-    repo = "https://github.com/allenwang0/volatilityscanner"
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Volatility Scanner report · Allen Wang</title>
-<script>try{{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}}catch(e){{}}</script>
-<script src="{PLOTLY}"></script>
-<style>{style}
-/* Report only: the shared allenwang0.github.io palette, font and 960px width. */
-:root {{ --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --bg: #fbfbf9; --ink: #111111; --muted: #5f5f63; --accent: #d70015; color-scheme: light; }}
-@media (prefers-color-scheme: dark) {{
-  :root:not([data-theme="light"]) {{ --bg: #0b0b0b; --panel: #141414; --ink: #f2f2ef; --muted: #a1a1a6; --accent: #ff5a4f; color-scheme: dark; }}
-}}
-:root[data-theme="dark"] {{ --bg: #0b0b0b; --panel: #141414; --ink: #f2f2ef; --muted: #a1a1a6; --accent: #ff5a4f; color-scheme: dark; }}
-body {{ max-width: 960px; }}
-.site-nav {{ display: flex; justify-content: space-between; gap: 16px; padding: 0 0 16px; font-size: 14px; }}
-.site-nav a {{ color: var(--muted); text-decoration: none; }}
-.site-nav a:hover {{ color: var(--ink); }}
-.synthetic {{ color: var(--muted); font-size: 14px; margin: 0 0 8px; }}
-.prose {{ max-width: 760px; color: var(--muted); font-size: 0.92rem; }}
-.prose a {{ color: inherit; }}
-.grid {{ align-items: start; }}
-table.num th, table.num td {{ text-align: right; font-variant-numeric: tabular-nums; }}
-</style>
-</head>
-<body>
-<nav class="site-nav" aria-label="Site"><a href="https://allenwang0.github.io/">← Allen Wang</a><a href="{repo}">Source</a></nav>
-<header>
-  <h1>Volatility Scanner report</h1>
-  <div class="controls"><button type="button" id="theme">Theme</button></div>
-</header>
-<p class="synthetic" id="data-label">Synthetic data: simulated option chain, seed {report["seed"]}.</p>
-<p class="prose">One tick of the seeded simulator: {p["quotes_checked"]} quotes (calls and puts, 20 strikes,
-expiries {", ".join(f"{s['days']:g}" for s in p["slices"])} days), spot {p["spot"]:.2f}. Every number on this
-page comes from <code>python report.py --seed {report["seed"]}</code>. The dashboard in the repo
-runs locally (<a href="{repo}#run-it">see the README</a>) and streams the same analysis twice a second.</p>
-<main class="grid">
-  <section class="panel">
-    <h2>Smile per expiry</h2>
-    <p class="takeaway" id="smile-takeaway"></p>
-    <div id="smile" class="chart"></div>
-    <ul id="failed" class="failed"></ul>
-  </section>
-  <section class="panel">
-    <h2>ATM term structure</h2>
-    <p class="takeaway" id="term-takeaway"></p>
-    <div id="term" class="chart small"></div>
-    <h2>25-delta skew</h2>
-    <p class="takeaway" id="skew-takeaway"></p>
-    <div id="skew" class="chart small"></div>
-  </section>
-  <section class="panel wide">
-    <h2>Static arbitrage</h2>
-    <div id="arb" class="table-wrap"></div>
-  </section>
-  <section class="panel wide">
-    <h2>SVI fit per expiry</h2>
-    <p class="takeaway">Held-out RMSE: fit on two thirds of the strikes, scored on the rest.
-    g(k) is the Gatheral-Jacquier density on 201 points; negative means butterfly arbitrage.</p>
-    <div class="table-wrap">{svi_rows}</div>
-  </section>
-  <section class="panel wide">
-    <h2>IV solver round trip</h2>
-    <p class="takeaway" id="rt-takeaway">{rt["identifiable"]:,} of {ROUND_TRIP_CONTRACTS:,} random
-    contracts have vega above 1e-4 S; max error {rt["max_error"]:.1e}, median {rt["median_error"]:.1e},
-    {rt["unsolved_identifiable"]} unsolved. Exact recoveries (error 0) are drawn at -17.</p>
-    <div id="hist" class="chart small"></div>
-  </section>
-  <section class="panel wide">
-    <h2>Vectorized solver benchmark</h2>
-    <p class="takeaway">{html.escape(report["machine"])}, median of 5 runs.</p>
-    <div class="table-wrap">{bench}</div>
-    <h2 style="margin-top:16px">Quote noise and false alarms</h2>
-    <p class="takeaway">Independent IV noise on each quote breaks butterfly convexity once it
-    exceeds the butterfly's value; {NOISE_TICKS} ticks per level.</p>
-    <div class="table-wrap">{noise}</div>
-  </section>
-</main>
-<script type="application/json" id="report-data">{data}</script>
-<script>{charts}</script>
-<script>
-(function () {{
-  var report = JSON.parse(document.getElementById("report-data").textContent);
-  var p = report.payload, $ = function (id) {{ return document.getElementById(id); }};
-  var state = {{ sortDesc: true }}, highlight = null;
-  function draw() {{
-    var t = VS.takeaways(p);
-    $("smile-takeaway").textContent = t.smile;
-    $("term-takeaway").textContent = t.term;
-    $("skew-takeaway").textContent = t.skew;
-    VS.renderSmile($("smile"), p, highlight);
-    VS.renderFailed($("failed"), p);
-    VS.renderTerm($("term"), p);
-    VS.renderSkew($("skew"), p);
-    VS.renderArbTable($("arb"), p, state, function (v) {{
-      highlight = VS.highlightFor(p, v); VS.renderSmile($("smile"), p, highlight);
-    }});
-    var ink = getComputedStyle(document.documentElement).getPropertyValue("--ink");
-    var grid = getComputedStyle(document.documentElement).getPropertyValue("--grid");
-    Plotly.react($("hist"), [{{ type: "histogram", x: report.round_trip.log10_error, marker: {{ color: "#0072B2" }},
-      hovertemplate: "log10 error %{{x}}<br>%{{y}} contracts<extra></extra>" }}], {{
-      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: {{ color: ink, family: getComputedStyle(document.documentElement).getPropertyValue("--font") }},
-      margin: {{ l: 56, r: 12, t: 8, b: 48 }}, bargap: 0.05,
-      xaxis: {{ title: {{ text: "log10 |σ̂ − σ|" }}, gridcolor: grid }},
-      yaxis: {{ title: {{ text: "Contracts" }}, gridcolor: grid }} }}, {{ responsive: true, displaylogo: false }});
-  }}
-  $("theme").addEventListener("click", function () {{
-    var root = document.documentElement;
-    var dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-    root.dataset.theme = dark ? "light" : "dark";
-    try {{ localStorage.setItem("theme", root.dataset.theme); }} catch (e) {{ /* not saved; still applied */ }}
-    draw();
-  }});
-  draw();
-}})();
-</script>
-</body>
-</html>
-"""
-
-
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--out", type=Path, default=Path("docs/index.html"))
+    parser.add_argument("--results", type=Path, default=Path("results/report.json"))
     parser.add_argument(
         "--card", type=Path, default=None, help="also write the portfolio card JSON"
     )
     args = parser.parse_args(argv)
     report = build(args.seed)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(render_html(report), encoding="utf-8")
-    print(f"wrote {args.out}")
+    args.results.parent.mkdir(parents=True, exist_ok=True)
+    args.results.write_text(json.dumps(results(report), indent=2, allow_nan=False) + "\n")
+    print(f"wrote {args.results}")
     if args.card:
         command = shlex.join(["python", "report.py", *(sys.argv[1:] if argv is None else argv)])
         card = build_card(report, command)

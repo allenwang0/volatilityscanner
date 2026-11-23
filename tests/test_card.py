@@ -1,21 +1,16 @@
 import json
-import re
 from pathlib import Path
 
 import jsonschema
 
 ROOT = Path(__file__).resolve().parents[1]
 CARD = ROOT / "site" / "card.json"
-REPORT = ROOT / "docs" / "index.html"
+RESULTS = ROOT / "results" / "report.json"
 SCHEMA = ROOT / "tests" / "fixtures" / "card.schema.json"
 
 
-def _report_data():
-    page = REPORT.read_text()
-    match = re.search(
-        r'<script type="application/json" id="report-data">(.*?)</script>', page, re.S
-    )
-    return json.loads(match.group(1))
+def _results():
+    return json.loads(RESULTS.read_text())
 
 
 def test_card_validates_against_the_site_schema():
@@ -31,9 +26,9 @@ def test_card_has_no_nan_or_infinity():
 
 
 def test_card_rmse_is_the_reports_nearest_monthly_value():
-    # The site shows the card's number; it must be the one the committed report shows.
+    # The site shows the card's number; it must be the one the committed results show.
     card = json.loads(CARD.read_text())
-    slices = _report_data()["payload"]["slices"]
+    slices = _results()["slices"]
     monthly = min(slices, key=lambda s: abs(s["days"] - 30))
     assert card["metric"]["value"] == round(monthly["rmse_vol_points"], 6)
     assert "simulated chain" in card["data_note"]

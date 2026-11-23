@@ -1,0 +1,251 @@
+{
+  "seed": 7,
+  "label": "Simulated data, seed 7",
+  "simulator": {
+    "spot": 5000.0030753833935,
+    "strikes": 20,
+    "strike_range": [
+      4500.0,
+      5500.0
+    ],
+    "iv_noise_sd": 0.0002
+  },
+  "tick": {
+    "quotes_checked": 160,
+    "conditions_checked": 361,
+    "violations": [],
+    "unsolved": 0
+  },
+  "slices": [
+    {
+      "days": 7.0,
+      "forward": 5004.799898359413,
+      "atm_iv": 0.13030743139384185,
+      "skew_25d": 5.356066288197342,
+      "rmse_vol_points": 0.03225711537281659,
+      "held_out_rmse_vol_points": 0.1140979855233276,
+      "held_out_train_quotes": 13,
+      "held_out_test_quotes": 7,
+      "min_density_g": 0.21534515339902868
+    },
+    {
+      "days": 30.0,
+      "forward": 5020.593312956217,
+      "atm_iv": 0.14496986241494914,
+      "skew_25d": 6.256329716902445,
+      "rmse_vol_points": 0.017645069045790385,
+      "held_out_rmse_vol_points": 0.02072272499066626,
+      "held_out_train_quotes": 13,
+      "held_out_test_quotes": 7,
+      "min_density_g": 0.2800046587462963
+    },
+    {
+      "days": 60.0,
+      "forward": 5041.26834205355,
+      "atm_iv": 0.1550723888976614,
+      "skew_25d": 6.202834193892001,
+      "rmse_vol_points": 0.01703668624785084,
+      "held_out_rmse_vol_points": 0.030452884347415634,
+      "held_out_train_quotes": 13,
+      "held_out_test_quotes": 7,
+      "min_density_g": 0.36021766169118874
+    },
+    {
+      "days": 90.0,
+      "forward": 5062.028511850701,
+      "atm_iv": 0.16001950479554009,
+      "skew_25d": 5.300169557287443,
+      "rmse_vol_points": 0.017143347888812444,
+      "held_out_rmse_vol_points": 0.028168855221169055,
+      "held_out_train_quotes": 13,
+      "held_out_test_quotes": 7,
+      "min_density_g": 0.42208254146510177
+    }
+  ],
+  "round_trip": {
+    "contracts": 10000,
+    "ranges": {
+      "spot": [
+        50.0,
+        5000.0
+      ],
+      "moneyness": [
+        0.5,
+        2.0
+      ],
+      "years": [
+        0.0027397260273972603,
+        2.0
+      ],
+      "sigma": [
+        0.05,
+        2.0
+      ],
+      "dividend": [
+        0.0,
+        0.05
+      ]
+    },
+    "rate": 0.03,
+    "usable_vega": 0.0001,
+    "zero_vega": 5,
+    "unidentifiable_solved": 331,
+    "by_vega_decade": [
+      {
+        "vega_over_spot_lo": 0.0,
+        "vega_over_spot_hi": 1e-15,
+        "contracts": 113,
+        "solved": 50,
+        "max_error": 0.28170743828287753,
+        "median_error": 0.04853703084149954
+      },
+      {
+        "vega_over_spot_lo": 1e-15,
+        "vega_over_spot_hi": 1e-14,
+        "contracts": 9,
+        "solved": 6,
+        "max_error": 0.0027764392335824645,
+        "median_error": 0.001625315481192463
+      },
+      {
+        "vega_over_spot_lo": 1e-14,
+        "vega_over_spot_hi": 1e-13,
+        "contracts": 13,
+        "solved": 10,
+        "max_error": 0.004650350580386153,
+        "median_error": 0.0016456405816992342
+      },
+      {
+        "vega_over_spot_lo": 1e-13,
+        "vega_over_spot_hi": 1e-12,
+        "contracts": 13,
+        "solved": 13,
+        "max_error": 0.003797377063302569,
+        "median_error": 8.852516388617448e-05
+      },
+      {
+        "vega_over_spot_lo": 1e-12,
+        "vega_over_spot_hi": 1e-11,
+        "contracts": 12,
+        "solved": 12,
+        "max_error": 0.00010061358715796054,
+        "median_error": 7.327120034018864e-06
+      },
+      {
+        "vega_over_spot_lo": 1e-11,
+        "vega_over_spot_hi": 1e-10,
+        "contracts": 25,
+        "solved": 25,
+        "max_error": 1.5410907943574914e-05,
+        "median_error": 1.0115297903040554e-06
+      },
+      {
+        "vega_over_spot_lo": 1e-10,
+        "vega_over_spot_hi": 1e-09,
+        "contracts": 17,
+        "solved": 17,
+        "max_error": 1.2582658563964344e-06,
+        "median_error": 7.202104594650205e-08
+      },
+      {
+        "vega_over_spot_lo": 1e-09,
+        "vega_over_spot_hi": 1e-08,
+        "contracts": 19,
+        "solved": 19,
+        "max_error": 1.9089992892018515e-07,
+        "median_error": 5.4957702277924625e-09
+      },
+      {
+        "vega_over_spot_lo": 1e-08,
+        "vega_over_spot_hi": 1e-07,
+        "contracts": 23,
+        "solved": 23,
+        "max_error": 1.0127624766598231e-08,
+        "median_error": 1.901110963098418e-09
+      },
+      {
+        "vega_over_spot_lo": 1e-07,
+        "vega_over_spot_hi": 1e-06,
+        "contracts": 30,
+        "solved": 30,
+        "max_error": 1.1195590288171076e-09,
+        "median_error": 7.284087222281244e-11
+      },
+      {
+        "vega_over_spot_lo": 1e-06,
+        "vega_over_spot_hi": 1e-05,
+        "contracts": 50,
+        "solved": 50,
+        "max_error": 1.4821427418709732e-10,
+        "median_error": 5.914740919266137e-12
+      },
+      {
+        "vega_over_spot_lo": 1e-05,
+        "vega_over_spot_hi": 0.0001,
+        "contracts": 76,
+        "solved": 76,
+        "max_error": 2.7520707934769462e-11,
+        "median_error": 7.292430548311302e-13
+      },
+      {
+        "vega_over_spot_lo": 0.0001,
+        "vega_over_spot_hi": 0.001,
+        "contracts": 113,
+        "solved": 113,
+        "max_error": 2.459810133359497e-12,
+        "median_error": 1.632860513467449e-13
+      },
+      {
+        "vega_over_spot_lo": 0.001,
+        "vega_over_spot_hi": 0.01,
+        "contracts": 219,
+        "solved": 219,
+        "max_error": 2.316202785124233e-13,
+        "median_error": 1.5765166949677223e-14
+      },
+      {
+        "vega_over_spot_lo": 0.01,
+        "vega_over_spot_hi": 0.1,
+        "contracts": 853,
+        "solved": 853,
+        "max_error": 2.486344463648038e-13,
+        "median_error": 1.609823385706477e-15
+      },
+      {
+        "vega_over_spot_lo": 0.1,
+        "vega_over_spot_hi": 1.0,
+        "contracts": 8415,
+        "solved": 8415,
+        "max_error": 2.427780199099061e-13,
+        "median_error": 2.220446049250313e-16
+      }
+    ],
+    "identifiable": 9600,
+    "unsolved_identifiable": 0,
+    "max_error": 2.459810133359497e-12,
+    "median_error": 2.220446049250313e-16,
+    "brent_share": 0.2062
+  },
+  "noise_sweep": [
+    {
+      "noise_sd": 0.0002,
+      "per_tick": 0.0,
+      "share_of_ticks": 0.0
+    },
+    {
+      "noise_sd": 0.0005,
+      "per_tick": 1.575,
+      "share_of_ticks": 0.85
+    },
+    {
+      "noise_sd": 0.001,
+      "per_tick": 5.575,
+      "share_of_ticks": 1.0
+    },
+    {
+      "noise_sd": 0.002,
+      "per_tick": 12.8,
+      "share_of_ticks": 1.0
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "seed": 7,
+  "date": "2026-11-23T04:51:42Z",
+  "machine": "arm64 Darwin, Python 3.12.13",
+  "cpu": "Apple M5 Pro",
+  "numpy": "2.4.6",
+  "repeats": 5,
+  "spot": 5000.0,
+  "rate": 0.05,
+  "usable_vega": 0.0001,
+  "load_before": [
+    4.95,
+    6.5,
+    6.76
+  ],
+  "load_after": [
+    4.95,
+    6.5,
+    6.76
+  ],
+  "timing": [
+    {
+      "n": 1000,
+      "scalar_ms": 12.269833008758724,
+      "vectorized_ms": 6.878125015646219,
+      "brent_share": 0.22,
+      "max_abs_diff": 9.412748358528233e-13
+    },
+    {
+      "n": 10000,
+      "scalar_ms": 119.58404199685901,
+      "vectorized_ms": 81.11579203978181,
+      "brent_share": 0.239,
+      "max_abs_diff": 2.40556186081875e-12
+    }
+  ]
+}

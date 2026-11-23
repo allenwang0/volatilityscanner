@@ -1,20 +1,24 @@
 import json
-import re
 
 import report
 
 
-def test_report_builds_with_the_seed_label_and_no_nan(tmp_path):
-    # The Pages report must say its data is simulated, and every number on it must be real.
-    out = tmp_path / "index.html"
-    report.main(["--seed", "7", "--out", str(out)])
-    page = out.read_text()
-    assert "Synthetic data: simulated option chain, seed 7." in page
-    assert "NaN" not in page
-    data = json.loads(
-        re.search(
-            r'<script type="application/json" id="report-data">(.*?)</script>', page, re.S
-        ).group(1)
-    )
-    assert data["seed"] == 7 and len(data["payload"]["slices"]) == 4
+def test_results_carry_the_seed_label_and_no_nan(tmp_path):
+    # The page is rendered from this file; it must say the data is simulated, and every
+    # number in it must be finite (json.dumps(allow_nan=False) raises otherwise).
+    out = tmp_path / "report.json"
+    report.main(["--seed", "7", "--results", str(out)])
+    data = json.loads(out.read_text())
+    assert data["label"] == "Simulated data, seed 7"
+    assert data["seed"] == 7 and len(data["slices"]) == 4
     assert data["round_trip"]["unsolved_identifiable"] == 0
+
+
+def test_committed_results_match_a_fresh_run(tmp_path):
+    # results/report.json is what Pages publishes; it must be what report.py produces now.
+    out = tmp_path / "report.json"
+    report.main(["--seed", "7", "--results", str(out)])
+    committed = report.HERE / "results" / "report.json"
+    assert json.loads(out.read_text()) == json.loads(committed.read_text()), (
+        "results/report.json is stale: run python report.py --seed 7 --card site/card.json"
+    )

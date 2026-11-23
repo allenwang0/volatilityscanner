@@ -370,7 +370,7 @@ def render_html(report: dict[str, Any]) -> str:
     held_label = ", ".join(
         f"{s['days']:g} days {s['held_out_rmse_vol_points']:.3f}" for s in slices
     )
-    title = "Volatility Scanner report"
+    title = "Volatility Scanner"
     desc = (
         "An implied-volatility solver, SVI smile fits and static-arbitrage checks, "
         f"run on a seeded simulated option chain (seed {seed})."

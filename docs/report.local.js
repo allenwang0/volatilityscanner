@@ -8,14 +8,14 @@
   function niceStep(span, n) { var raw = span / n, e = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / e; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * e; }
 
   /* Small multiples of SVI residuals (quote IV minus fit, vol points), one panel per expiry.
-     Filled dots: training strikes. Open dots: held-out strikes. Shared x and y scales. */
+     Residuals against the two-thirds fit. Filled: its training strikes. Open: held out. Shared x and y scales. */
   function residuals(el, panels) {
     var last = 0, timer;
     var kmin = Infinity, kmax = -Infinity, rmax = 0;
     panels.forEach(function (p) { p.points.forEach(function (q) { kmin = Math.min(kmin, q[0]); kmax = Math.max(kmax, q[0]); rmax = Math.max(rmax, Math.abs(q[1])); }); });
     var step = niceStep(2 * rmax, 4), ylim = Math.ceil(rmax / step) * step, kstep = niceStep(kmax - kmin, 4);
     function draw() {
-      var W = Math.max(260, el.clientWidth);
+      var W = Math.max(200, el.clientWidth);
       if (W === last) return; last = W;
       var cols = W >= 600 ? 2 : 1, gap = 24, pw = Math.floor((W - gap * (cols - 1)) / cols), ph = 190;
       var L = 52, R = 10, T = 28, B = 40;
@@ -25,7 +25,7 @@
       html += '<div class="yl">Quote IV − fit (vol points)</div><div class="sm" style="grid-template-columns:repeat(' + cols + ',1fr)">';
       panels.forEach(function (p) {
         var s = '<svg xmlns="' + NS + '" class="chart" viewBox="0 0 ' + pw + " " + ph + '" width="' + pw + '" height="' + ph + '" aria-hidden="true">';
-        s += '<text class="op" x="' + L + '" y="16">' + esc(p.days + "-day") + '</text><text class="val" x="' + (pw - R) + '" y="16" text-anchor="end">held out ' + p.held_out.toFixed(3) + " · in-sample " + p.in_sample.toFixed(3) + "</text>";
+        s += '<text class="op" x="' + L + '" y="16">' + esc(p.days + "-day") + '</text><text class="val" x="' + (pw - R) + '" y="16" text-anchor="end">train ' + p.train.toFixed(3) + " · held out " + p.held_out.toFixed(3) + "</text>";
         for (var v = -ylim; v <= ylim + 1e-12; v += step) {
           var y = Y(v);
           s += '<line x1="' + L + '" x2="' + (pw - R) + '" y1="' + y + '" y2="' + y + '" stroke="' + (Math.abs(v) < 1e-12 ? "var(--axis)" : "var(--grid)") + '"/>';

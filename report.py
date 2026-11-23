@@ -78,6 +78,7 @@ def held_out_fit(chain, iv) -> dict[float, dict[str, Any]]:
         resid = (iv[idx] - fit.params.implied_vol(k, T)) * 100
         out[float(days)] = {
             "rmse": float(np.sqrt(np.mean(resid[~train] ** 2))),
+            "train_rmse": float(np.sqrt(np.mean(resid[train] ** 2))),
             "points": [
                 [round(float(a), 5), round(float(b), 5), int(not t)]
                 for a, b, t in zip(k, resid, train, strict=True)
@@ -117,6 +118,7 @@ def build(seed: int) -> dict[str, Any]:
     held_out = held_out_fit(chain, iv)
     for s in payload["slices"]:
         s["held_out_rmse_vol_points"] = held_out[s["days"]]["rmse"]
+        s["held_out_train_rmse_vol_points"] = held_out[s["days"]]["train_rmse"]
         s["residuals"] = held_out[s["days"]]["points"]
     bench: list[BenchRow] = run_benchmark(seed)
     return {
@@ -253,6 +255,7 @@ def render_html(report: dict[str, Any]) -> str:
     held = [s["held_out_rmse_vol_points"] for s in slices]
     worst = max(slices, key=lambda s: s["held_out_rmse_vol_points"])
     worst_ratio = worst["held_out_rmse_vol_points"] / worst["rmse_vol_points"]
+    worst_train_n = sum(1 for q in worst["residuals"] if not q[2])
     others_max = max(s["held_out_rmse_vol_points"] for s in slices if s is not worst)
     big = max(report["benchmark"], key=lambda b: b["n"])
     speedup = big["scalar_ms"] / big["vectorized_ms"]
@@ -278,6 +281,7 @@ def render_html(report: dict[str, Any]) -> str:
         [
             "Expiry",
             "In-sample RMSE",
+            "⅔-fit train RMSE",
             "Held-out RMSE",
             "Held-out ÷ in-sample",
             "ATM IV",
@@ -288,6 +292,7 @@ def render_html(report: dict[str, Any]) -> str:
             [
                 f"{s['days']:g} days",
                 f"{s['rmse_vol_points']:.3f}",
+                f"{s['held_out_train_rmse_vol_points']:.3f}",
                 f"{s['held_out_rmse_vol_points']:.3f}",
                 f"{s['held_out_rmse_vol_points'] / s['rmse_vol_points']:.2f}×",
                 f"{s['atm_iv'] * 100:.1f}{NBSP}%",
@@ -341,7 +346,8 @@ def render_html(report: dict[str, Any]) -> str:
     chart_data = {
         "noise": [
             {
-                "label": f"{n['noise_sd']:.4f}" + (" default" if n["noise_sd"] == default_sd else ""),
+                "label": f"{n['noise_sd']:.4f}"
+                + (" default" if n["noise_sd"] == default_sd else ""),
                 "share": round(n["share_of_ticks"] * 100, 1),
             }
             for n in sweep
@@ -349,7 +355,7 @@ def render_html(report: dict[str, Any]) -> str:
         "residuals": [
             {
                 "days": s["days"],
-                "in_sample": round(s["rmse_vol_points"], 3),
+                "train": round(s["held_out_train_rmse_vol_points"], 3),
                 "held_out": round(s["held_out_rmse_vol_points"], 3),
                 "points": s["residuals"],
             }
@@ -384,6 +390,7 @@ def render_html(report: dict[str, Any]) -> str:
 <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0b0b0b" media="(prefers-color-scheme: dark)">
 <script>try{{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}}catch(e){{}}</script>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="kit/report.css">
 <link rel="stylesheet" href="report.local.css">
 <script src="kit/report.js" defer></script>
@@ -443,15 +450,18 @@ def render_html(report: dict[str, Any]) -> str:
   <section class="s wrap" id="fits" aria-labelledby="h-fits">
     <p class="eyebrow">How well does SVI fit?</p>
     <h2 id="h-fits">SVI misses held-out strikes by {_range(held)} vol points; the {worst["days"]:g}-day fit is {worst_ratio:.2f}× worse than in-sample</h2>
-    <p class="lede">Each expiry is fit on two thirds of its out-of-the-money strikes and scored on
-    every third strike. Beyond {worst["days"]:g} days, held-out error stays at or below
-    {others_max:.3f} vol points.</p>
+    <p class="lede">In-sample error is the fit on all out-of-the-money strikes. Held-out error
+    refits on two thirds of them and scores every third strike. Beyond {worst["days"]:g} days,
+    held-out error stays at or below {others_max:.3f} vol points. The {worst["days"]:g}-day gap is
+    not overfitting: the two-thirds fit already misses its own {worst_train_n} training strikes by
+    {worst["held_out_train_rmse_vol_points"]:.3f}, so with fewer strikes the short-dated smile is
+    fit poorly everywhere.</p>
     <figure class="figure" aria-labelledby="f-fits">
       <div class="fig-head"><div><h3 id="f-fits">Held-out residuals are widest on the {worst["days"]:g}-day smile</h3><p class="sub">Quote IV minus SVI fit · vol points · one panel per expiry</p></div>
         {toggle}</div>
       <div id="c-fits" role="img" aria-label="Residuals per expiry. Held-out RMSE in vol points: {held_label}."></div><div id="t-fits" class="rk-table">{fit_table}</div>
-      <figcaption>Filled dots are the strikes each fit was trained on; open dots are held out. All
-      panels share both scales. The table adds ATM IV, 25-delta skew and the minimum
+      <figcaption>Residuals against the two-thirds fit. Filled dots are its training strikes; open
+      dots are held out. All panels share both scales. The table adds ATM IV, 25-delta skew and the minimum
       Gatheral-Jacquier density g(k) on 201 points (a negative value would mean butterfly
       arbitrage).</figcaption>
     </figure>
@@ -472,8 +482,8 @@ def render_html(report: dict[str, Any]) -> str:
   <section class="s wrap" id="speed" aria-labelledby="h-speed">
     <p class="eyebrow">Does vectorizing pay?</p>
     <h2 id="h-speed">The vectorized solver is {speedup:.2f}× faster than a scalar loop on {big["n"]:,} options</h2>
-    <p class="lede">Both solvers agree to within {_sci(big["max_abs_diff"])}. The gain is modest:
-    {_pct(big["brent_share"])} of these options still take the Brent fallback.</p>
+    <p class="lede">Both solvers agree to within {_sci(big["max_abs_diff"])}. The gain is modest, and
+    {_pct(big["brent_share"])} of these options need the Brent fallback.</p>
     {bench_table}
     <p class="caveat"><b>Timing depends on the machine.</b> This build ran on {machine_txt}. The
     Pages build re-times on every deploy, so these numbers change with the runner.</p>
@@ -484,7 +494,7 @@ def render_html(report: dict[str, Any]) -> str:
     <h2 id="h-method">How this was measured</h2>
     <div class="prose" style="margin-top:24px">
       <p>The simulator draws one tick of {p["quotes_checked"]} calls and puts across {len(slices)}
-      expiries around spot {p["spot"]:,.2f}. Each expiry's true smile is a raw-SVI curve from
+      expiries around spot {p["spot"]:,.0f}. Each expiry's true smile is a raw-SVI curve from
       <span class="mono">simulator.py</span>, and each quote's IV gets independent normal noise.</p>
       <p>Implied volatilities are solved with Newton steps and a Brent fallback, fit per expiry
       with SVI, and checked for static arbitrage. The noise sweep reruns the same seed at

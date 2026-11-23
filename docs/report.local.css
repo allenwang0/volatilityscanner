@@ -3,4 +3,8 @@
 .sm svg{display:block;width:100%;height:auto}
 .plot .yl{font-size:12px;color:var(--ink-3);margin-top:12px}
 .s > .tablewrap{max-width:860px;margin-top:24px}
-td sup,th sup,.metric sup{font-size:.62em;line-height:0}
+sup{font-size:max(11px,.7em);line-height:0}
+/* Kit workaround: charts.js draws at least 260px wide; at 320px the figure's content box is
+   ~246px, so the SVG scaled down and tick text fell under 11px. Narrow the padding there. */
+@media (max-width:359px){.figure{padding-left:12px;padding-right:12px}}
+.s > .tablewrap{background:var(--surface-1)}

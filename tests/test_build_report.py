@@ -43,7 +43,7 @@ def test_hero_is_the_round_trip_max_error_over_usable_contracts(tmp_path):
     value = re.search(r'<p class="hero-metric"><span class="value">([^<]+)</span>', page).group(1)
     exp = int(f"{rt['max_error']:e}".split("e")[1])
     mantissa = rt["max_error"] / 10**exp
-    assert value == f"{mantissa:.1f} × 10{superscript(exp)}"
+    assert value == f"{mantissa:.1f}\u00a0×\u00a010{superscript(exp)}"
     text = text_of(page)
     assert f"all {rt['identifiable']:,} contracts with usable vega solved" in text
     assert "Simulated data, no market quotes" in text, "hero context must say the data is simulated"

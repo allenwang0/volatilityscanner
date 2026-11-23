@@ -30,7 +30,6 @@ PAGE_URL = "https://allenwang0.github.io/volatilityscanner/"
 HOME_URL = "https://allenwang0.github.io/"
 README_START = "<!-- results:start -->"
 README_END = "<!-- results:end -->"
-THIN = " "
 SUP = str.maketrans("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹")
 CHECK_TEXT = {
     "monotonicity": ("Call prices fall as strike rises", "a higher strike can never be worth more"),
@@ -61,7 +60,7 @@ def sci(x, digits=2):
     m = x / 10**e
     if round(m, digits - 1) >= 10:
         m, e = m / 10, e + 1
-    return f"{m:.{digits - 1}f}{THIN}×{THIN}10{str(e).translate(SUP)}"
+    return f"{m:.{digits - 1}f}{rk.NBSP}×{rk.NBSP}10{str(e).translate(SUP)}"
 
 
 WORDS = {
@@ -87,7 +86,7 @@ def pow10(e):
 
 
 def vol_pts(x, digits=3):
-    return f"{x:.{digits}f}{THIN}vol pts"
+    return rk.num(f"{x:.{digits}f}", "vol pts")
 
 
 # ---------------------------------------------------------------- inputs
@@ -419,7 +418,7 @@ def fit_chart(res, floor_pts, uid, width):
     for i, s in enumerate(rows):
         cy = top + i * row_h + row_h / 2
         a, b = x(s["rmse_vol_points"]), x(s["held_out_rmse_vol_points"])
-        parts.append(rk.svg_text(0, cy + 4, f"{s['days']:g} days", "c-label"))
+        parts.append(rk.svg_text(0, cy + 4, rk.num(f"{s['days']:g}", "days"), "c-label"))
         parts.append(
             f'<path class="c-stroke-muted" stroke-width="2" d="M{rk.coord(min(a, b))} {rk.coord(cy)}H{rk.coord(max(a, b))}"/>'
         )
@@ -431,10 +430,10 @@ def fit_chart(res, floor_pts, uid, width):
     parts.append(rk.svg_text(plot_r, bottom + 38, "RMSE (vol points)", "c-title", "end"))
     desc = (
         "; ".join(
-            f"{s['days']:g} days: in-sample {s['rmse_vol_points']:.3f}, held out {s['held_out_rmse_vol_points']:.3f}"
+            f"{rk.num(format(s['days'], 'g'), 'days')}: in-sample {s['rmse_vol_points']:.3f}, held out {s['held_out_rmse_vol_points']:.3f}"
             for s in rows
         )
-        + f" vol points. Noise added to the simulated quotes: {floor_pts:.2f} vol points."
+        + f"{rk.NBSP}vol points. Noise added to the simulated quotes: {rk.num(format(floor_pts, '.2f'), 'vol points')}."
     )
     return rk.svg(
         uid, width, bottom + 46, "SVI error sits at the simulated noise level", desc, "".join(parts)
@@ -444,7 +443,7 @@ def fit_chart(res, floor_pts, uid, width):
 def sweep_chart(d, facts, uid, width):
     rows = [
         {
-            "label": f"{r['noise_sd'] * 100:.2f} vol pts"
+            "label": rk.num(f"{r['noise_sd'] * 100:.2f}", "vol pts")
             + (" (default)" if r["noise_sd"] == facts["noise_sd"] else ""),
             "value": r["per_tick"],
             "accent": r["noise_sd"] == facts["noise_sd"],
@@ -533,7 +532,7 @@ def evidence_rows(res, bench, d, facts, shas):
         ),
         (
             "E7",
-            f"One tick every {facts['tick_s']:g} s",
+            f"One tick every {rk.num(format(facts['tick_s'], 'g'), 's')}",
             f"main.py:{tick[0]}",
             blob("main.py", *tick),
             "Verified",
@@ -565,11 +564,10 @@ def evidence_rows(res, bench, d, facts, shas):
 def hero_media():
     return Raw(
         '<p class="card-label">The dashboard, simulated chain</p>'
-        '<a href="assets/live.gif" aria-label="Open the dashboard recording full size" style="display:block;border-radius:12px;overflow:hidden">'
         '<picture><source srcset="assets/live-still.png" media="(prefers-reduced-motion: reduce)">'
-        '<img src="assets/live.gif" width="825" height="540" style="display:block;width:100%;height:auto" '
+        '<img src="assets/live.gif" width="825" height="540" '
         'alt="Recording of the dashboard on simulated data: four implied-volatility smiles with SVI fits, the '
-        'at-the-money term structure and 25-delta skew, updating each tick."></picture></a>'
+        'at-the-money term structure and 25-delta skew, updating each tick."></picture>'
     )
 
 
@@ -611,24 +609,18 @@ def build_page(res, bench, shas, alt):
         figure=hero_media(),
     )
 
-    toc = Raw(
-        '<nav class="wrap" aria-label="Contents" style="margin-top:-24px"><p class="card-label">Contents</p>'
-        '<ol style="display:flex;flex-wrap:wrap;gap:4px 24px;margin:0;padding:0;list-style:none;font-size:15px">'
-        + "".join(
-            f'<li><a href="#{sid}" style="display:inline-block;padding:10px 0">{esc(label)}</a></li>'
-            for sid, label in [
-                ("findings", "Findings"),
-                ("solver", "Solver"),
-                ("smile", "Smile fit"),
-                ("arbitrage", "Arbitrage checks"),
-                ("streaming", "Streaming"),
-                ("methodology", "Methodology"),
-                ("limitations", "Limitations"),
-                ("reproduce", "Reproduce"),
-                ("evidence", "Evidence"),
-            ]
-        )
-        + "</ol></nav>"
+    toc = rk.toc(
+        [
+            ("findings", "Findings"),
+            ("solver", "Solver"),
+            ("smile", "Smile fit"),
+            ("arbitrage", "Arbitrage checks"),
+            ("streaming", "Streaming"),
+            ("methodology", "Methodology"),
+            ("limitations", "Limitations"),
+            ("reproduce", "Reproduce"),
+            ("evidence", "Evidence"),
+        ]
     )
 
     s7 = d["slices"].get(7)
@@ -650,7 +642,7 @@ def build_page(res, bench, shas, alt):
                         rk.tag(
                             "p",
                             Raw(
-                                f"The simulator adds {d['floor_pts']:.2f} vol points of noise, so the fit cannot do better "
+                                f"The simulator adds {rk.num(format(d['floor_pts'], '.2f'), 'vol points')} of noise, so the fit cannot do better "
                                 f"on these quotes.{R('E3')}{R('E4')}"
                             ),
                         ),
@@ -710,13 +702,13 @@ def build_page(res, bench, shas, alt):
                                 (
                                     "Vectorized",
                                     d["vector_ms"],
-                                    f"{d['vector_ms']:.0f}{THIN}ms",
+                                    rk.num(f"{d['vector_ms']:.0f}", "ms"),
                                     True,
                                 ),
                                 (
                                     "Scalar loop",
                                     d["scalar_ms"],
-                                    f"{d['scalar_ms']:.0f}{THIN}ms",
+                                    rk.num(f"{d['scalar_ms']:.0f}", "ms"),
                                     False,
                                 ),
                             ],
@@ -878,9 +870,9 @@ def build_page(res, bench, shas, alt):
             ],
             [
                 [
-                    f"{s['days']:g} days",
+                    rk.num(f"{s['days']:g}", "days"),
                     f"{s['atm_iv']:.1%}",
-                    f"{s['skew_25d']:.2f} vol pts",
+                    rk.num(f"{s['skew_25d']:.2f}", "vol pts"),
                     f"{s['rmse_vol_points']:.3f}",
                     f"{s['held_out_rmse_vol_points']:.3f}",
                     str(s["held_out_test_quotes"]),
@@ -908,7 +900,7 @@ def build_page(res, bench, shas, alt):
                     f"The test is close to circular, and the report treats it that way. The simulated chain is generated from "
                     f"SVI curves plus independent N(0, {facts['noise_sd']:g}) noise in each quote's volatility, so an SVI fit "
                     f"can at best recover that curve to the {d['floor_pts']:.2f}-point noise. In-sample RMSE of "
-                    f"{d['fit_min']:.3f}–{d['fit_max']:.3f} vol points means the fitter recovers its own model; it says nothing "
+                    f"{rk.num(format(d['fit_min'], '.3f') + '–' + format(d['fit_max'], '.3f'), 'vol points')} means the fitter recovers its own model; it says nothing "
                     f"about how SVI fits real quotes.{R('E4')}"
                 ),
             ),
@@ -1005,7 +997,7 @@ def build_page(res, bench, shas, alt):
             rk.tag(
                 "p",
                 Raw(
-                    f"At the simulator's default noise ({base['noise_sd'] * 100:.2f} vol points) no check fires. Raising the "
+                    f"At the simulator's default noise ({rk.num(format(base['noise_sd'] * 100, '.2f'), 'vol points')}) no check fires. Raising the "
                     f"noise produces violations at a rate that grows with it — consistent with the checks catching the price "
                     f"inconsistencies noise creates. The sweep does not separate which check fires; no real chain has been "
                     f"archived to test against."
@@ -1028,7 +1020,7 @@ def build_page(res, bench, shas, alt):
             rk.tag(
                 "p",
                 Raw(
-                    f"One producer task builds a tick every {facts['tick_s']:g} s — solve, fit, check — and serializes it once. "
+                    f"One producer task builds a tick every {rk.num(format(facts['tick_s'], 'g'), 's')} — solve, fit, check — and serializes it once. "
                     f"Each WebSocket client gets an <code>asyncio.Queue(maxsize={facts['queue']})</code>. Publishing never waits: "
                     f"if a client's slot still holds an unsent tick, that tick is dropped and the new one takes its place.{R('E8')}"
                 ),

@@ -30,11 +30,14 @@ def test_card_has_no_nan_or_infinity():
     json.loads(CARD.read_text(), parse_constant=reject)
 
 
-def test_card_rmse_is_the_reports_nearest_monthly_value():
-    # The site shows the card's number; it must be the one the committed report shows.
+def test_card_rmse_is_the_reports_held_out_nearest_monthly_value():
+    # The site shows the card's number; it must be the one the committed report shows, and it
+    # must be the held-out error: in-sample RMSE on an SVI-generated chain flatters the fit.
     card = json.loads(CARD.read_text())
     slices = _report_data()["payload"]["slices"]
     monthly = min(slices, key=lambda s: abs(s["days"] - 30))
-    assert card["metric"]["value"] == round(monthly["rmse_vol_points"], 6)
+    assert card["metric"]["value"] == round(monthly["held_out_rmse_vol_points"], 6)
+    # The quotes are simulated; the card must never call them market quotes.
+    assert all("market" not in s["name"].lower() for s in card["chart"]["series"])
     assert "simulated chain" in card["data_note"]
     assert len(card["takeaway"]) <= 140

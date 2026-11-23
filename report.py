@@ -14,17 +14,17 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import scipy
 
-from bench.bench_iv import BenchRow, machine
+from bench.bench_iv import REPEATS, BenchRow, machine
 from bench.bench_iv import run as run_benchmark
 from engine import CALL, PUT, black_scholes_price_vec, implied_volatility_vec, vega_vec
 from main import build_payload
-from simulator import MarketSimulator
+from simulator import IV_NOISE_SD, MarketSimulator
 from surface import otm_mask
 from svi import fit_svi
 
 HERE = Path(__file__).parent
-PLOTLY = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 ROUND_TRIP_CONTRACTS = 10_000
 NOISE_LEVELS = (0.0002, 0.0005, 0.001, 0.002)
 NOISE_TICKS = 40
@@ -33,7 +33,7 @@ CARD_FIT_POINTS = 101
 
 
 def round_trip_errors(seed: int) -> dict[str, Any]:
-    """Price random contracts exactly, solve them back, and bin log10 |sigma_hat - sigma|."""
+    """Price random contracts exactly, solve them back, and summarize |sigma_hat - sigma|."""
     rng = np.random.default_rng(seed)
     n = ROUND_TRIP_CONTRACTS
     S = rng.uniform(50, 5000, n)
@@ -48,10 +48,10 @@ def round_trip_errors(seed: int) -> dict[str, Any]:
     identifiable = vega_vec(S, K, T, r, sigma, q) > 1e-4 * S
     err = np.abs(solved.sigma - sigma)
     ok = identifiable & np.isfinite(err)
-    log_err = np.log10(np.maximum(err[ok], 1e-17))
     return {
-        "log10_error": np.round(log_err, 3).tolist(),
+        "contracts": n,
         "identifiable": int(identifiable.sum()),
+        "exact": int((err[ok] == 0).sum()),
         "unsolved_identifiable": int((identifiable & ~np.isfinite(err)).sum()),
         "max_error": float(err[ok].max()),
         "median_error": float(np.median(err[ok])),
@@ -59,8 +59,12 @@ def round_trip_errors(seed: int) -> dict[str, Any]:
     }
 
 
-def held_out_rmse(chain, iv) -> dict[float, float]:
-    """Per expiry: fit SVI on two thirds of the solved OTM quotes, RMSE (vol points) on the rest."""
+def held_out_fit(chain, iv) -> dict[float, dict[str, Any]]:
+    """Per expiry: fit SVI on two thirds of the solved OTM quotes, RMSE (vol points) on the rest.
+
+    Also returns every quote's residual (quote IV - fit, vol points) against that same fit,
+    flagged 1 if the strike was held out, so the report can plot what the RMSE summarizes.
+    """
     otm = otm_mask(chain)
     vega = vega_vec(chain.spot, chain.strike, chain.T, chain.r, np.where(np.isfinite(iv), iv, 0.2))
     out = {}
@@ -71,8 +75,14 @@ def held_out_rmse(chain, iv) -> dict[float, float]:
         T = float(chain.T[idx[0]])
         train = np.arange(len(idx)) % 3 != 0
         fit = fit_svi(k[train], iv[idx][train], T, vega[idx][train])
-        resid = fit.params.implied_vol(k[~train], T) - iv[idx][~train]
-        out[float(days)] = float(np.sqrt(np.mean(resid**2)) * 100)
+        resid = (iv[idx] - fit.params.implied_vol(k, T)) * 100
+        out[float(days)] = {
+            "rmse": float(np.sqrt(np.mean(resid[~train] ** 2))),
+            "points": [
+                [round(float(a), 5), round(float(b), 5), int(not t)]
+                for a, b, t in zip(k, resid, train, strict=True)
+            ],
+        }
     return out
 
 
@@ -81,14 +91,19 @@ def noise_sweep(seed: int) -> list[dict[str, float]]:
     rows = []
     for sd in NOISE_LEVELS:
         sim = MarketSimulator(seed=seed, noise_sd=sd)
-        counts = [
-            len(build_payload(sim.generate_tick(), t)["violations"]) for t in range(NOISE_TICKS)
-        ]
+        found = [build_payload(sim.generate_tick(), t)["violations"] for t in range(NOISE_TICKS)]
+        counts = [len(v) for v in found]
+        flat = [v for tick in found for v in tick]
         rows.append(
             {
                 "noise_sd": sd,
+                "ticks": NOISE_TICKS,
                 "per_tick": float(np.mean(counts)),
                 "share_of_ticks": float(np.mean([c > 0 for c in counts])),
+                "ticks_flagged": sum(c > 0 for c in counts),
+                "violations": len(flat),
+                "butterfly": sum(v["type"] == "butterfly" for v in flat),
+                "spread_checked": sum(v["exceeds_spread"] is not None for v in flat),
             }
         )
     return rows
@@ -99,12 +114,18 @@ def build(seed: int) -> dict[str, Any]:
     chain = sim.generate_tick()
     payload = build_payload(chain, 1)
     iv = np.array([np.nan if v is None else v for v in payload["iv"]])
-    held_out = held_out_rmse(chain, iv)
+    held_out = held_out_fit(chain, iv)
     for s in payload["slices"]:
-        s["held_out_rmse_vol_points"] = held_out[s["days"]]
+        s["held_out_rmse_vol_points"] = held_out[s["days"]]["rmse"]
+        s["residuals"] = held_out[s["days"]]["points"]
     bench: list[BenchRow] = run_benchmark(seed)
     return {
         "seed": seed,
+        "sha": git_sha(),
+        "date": datetime.now(UTC).strftime("%Y-%m-%d"),
+        "default_noise_sd": IV_NOISE_SD,
+        "repeats": REPEATS,
+        "versions": {"numpy": np.__version__, "scipy": scipy.__version__},
         "label": f"Simulated data, seed {seed}",
         "payload": payload,
         "benchmark": [row.__dict__ for row in bench],
@@ -112,6 +133,12 @@ def build(seed: int) -> dict[str, Any]:
         "round_trip": round_trip_errors(seed),
         "noise_sweep": noise_sweep(seed),
     }
+
+
+def git_sha() -> str:
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True, check=True
+    ).stdout.strip()
 
 
 def card_slice(report: dict[str, Any]) -> dict[str, Any]:
@@ -137,24 +164,21 @@ def build_card(report: dict[str, Any], command: str) -> dict[str, Any]:
     fit_iv = np.sqrt(np.maximum(w, 0) / (s["days"] / 365)) * 100
     fit_x = s["forward"] * np.exp(k) / spot
     fit = [[round(float(x), 6), round(float(y), 4)] for x, y in zip(fit_x, fit_iv, strict=True)]
-    sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True, check=True
-    ).stdout.strip()
     days = round(s["days"])
     takeaway = (
-        f"SVI fits the {days}-day simulated smile to {s['rmse_vol_points']:.2f} vol points RMSE; "
-        f"25-delta skew is {s['skew_25d']:.1f} vol points."
+        f"SVI fits the {days}-day simulated smile to {s['held_out_rmse_vol_points']:.3f} vol "
+        f"points on held-out strikes ({s['rmse_vol_points']:.3f} in-sample)."
     )
     return {
         "schema_version": 1,
         "repo": "volatilityscanner",
-        "sha": sha,
+        "sha": report["sha"],
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "command": command,
         "data_note": f"Seeded simulated chain, seed {report['seed']}, SVI parameters in simulator.py",
         "metric": {
-            "label": "SVI fit RMSE, nearest monthly expiry",
-            "value": round(s["rmse_vol_points"], 6),
+            "label": "SVI held-out RMSE, nearest monthly expiry",
+            "value": round(s["held_out_rmse_vol_points"], 6),
             "unit": "vol points",
             "higher_is_better": False,
         },
@@ -168,189 +192,326 @@ def build_card(report: dict[str, Any], command: str) -> dict[str, Any]:
             "y_unit": "%",
             "y_scale": "linear",
             "series": [
-                {"name": "Market quotes", "style": "dots", "points": quotes},
+                {"name": "Simulated quotes", "style": "dots", "points": quotes},
                 {"name": "SVI fit", "style": "solid", "points": fit},
             ],
         },
     }
 
 
-def _table(head: list[str], rows: list[list[str]]) -> str:
-    # Every report table is all numbers, so every column is right-aligned (class "num").
+NBSP = " "
+REPO = "https://github.com/allenwang0/volatilityscanner"
+
+
+def _table(head: list[str], rows: list[list[str]], caption: str) -> str:
+    # First column is a row header; the rest are numbers, right-aligned by the kit.
     th = "".join(f"<th scope='col'>{html.escape(h)}</th>" for h in head)
     body = "".join(
-        "<tr>" + "".join(f"<td>{html.escape(c)}</td>" for c in row) + "</tr>" for row in rows
+        f"<tr><th scope='row'>{row[0]}</th>" + "".join(f"<td>{c}</td>" for c in row[1:]) + "</tr>"
+        for row in rows
     )
-    return f"<table class='num'><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table>"
+    return (
+        f"<div class='tablewrap' tabindex='0' role='region' aria-label='{html.escape(caption)}'>"
+        f"<table><caption>{html.escape(caption)}</caption><thead><tr>{th}</tr></thead>"
+        f"<tbody>{body}</tbody></table></div>"
+    )
+
+
+def _sci(x: float) -> str:
+    """2.5e-12 -> 2.5 × 10<sup>−12</sup> (HTML)."""
+    mant, exp = f"{x:.1e}".split("e")
+    if int(exp) >= 0:
+        return f"{x:.1f}"
+    return f"{mant}{NBSP}×{NBSP}10<sup>−{abs(int(exp))}</sup>"
+
+
+def _pct(x: float) -> str:
+    return f"{x * 100:.0f}{NBSP}%" if x == 0 or x >= 0.1 else f"{x * 100:.1f}{NBSP}%"
+
+
+def _range(values: list[float]) -> str:
+    return f"{min(values):.3f}–{max(values):.3f}"
+
+
+def _pts(sd: float) -> str:
+    """IV units -> vol points."""
+    return f"{sd * 100:g}"
 
 
 def render_html(report: dict[str, Any]) -> str:
     p = report["payload"]
     rt = report["round_trip"]
-    bench = _table(
+    slices = p["slices"]
+    sweep = report["noise_sweep"]
+    default_sd = report["default_noise_sd"]
+    seed = report["seed"]
+    sha = report["sha"][:7]
+    # The first tested noise level above the simulator default that produced any flag.
+    alarm = next(n for n in sweep if n["noise_sd"] > default_sd and n["share_of_ticks"] > 0)
+    quiet = next(n for n in sweep if n["noise_sd"] == default_sd)
+    in_sample = [s["rmse_vol_points"] for s in slices]
+    held = [s["held_out_rmse_vol_points"] for s in slices]
+    worst = max(slices, key=lambda s: s["held_out_rmse_vol_points"])
+    worst_ratio = worst["held_out_rmse_vol_points"] / worst["rmse_vol_points"]
+    others_max = max(s["held_out_rmse_vol_points"] for s in slices if s is not worst)
+    big = max(report["benchmark"], key=lambda b: b["n"])
+    speedup = big["scalar_ms"] / big["vectorized_ms"]
+    expiries = ", ".join(f"{s['days']:g}" for s in slices)
+    machine_txt = html.escape(report["machine"])
+
+    noise_table = _table(
+        ["IV noise sd", "Vol points", "Ticks flagged", "Share", "Violations per tick", "Butterfly"],
         [
-            "Options",
-            "Scalar loop (ms)",
-            "Vectorized (ms)",
-            "Speedup",
-            "Brent fallback",
-            "Max diff, vega > 1e-4 S (S = spot)",
+            [
+                f"{n['noise_sd']:.4f}" + (" (default)" if n["noise_sd"] == default_sd else ""),
+                _pts(n["noise_sd"]),
+                f"{n['ticks_flagged']} of {n['ticks']}",
+                _pct(n["share_of_ticks"]),
+                f"{n['per_tick']:.2f}",
+                f"{n['butterfly']} of {n['violations']}",
+            ]
+            for n in sweep
         ],
+        f"Static-arbitrage violations by quote noise, {quiet['ticks']} ticks per level, seed {seed}",
+    )
+    fit_table = _table(
+        [
+            "Expiry",
+            "In-sample RMSE",
+            "Held-out RMSE",
+            "Held-out ÷ in-sample",
+            "ATM IV",
+            "25-delta skew",
+            "min g(k)",
+        ],
+        [
+            [
+                f"{s['days']:g} days",
+                f"{s['rmse_vol_points']:.3f}",
+                f"{s['held_out_rmse_vol_points']:.3f}",
+                f"{s['held_out_rmse_vol_points'] / s['rmse_vol_points']:.2f}×",
+                f"{s['atm_iv'] * 100:.1f}{NBSP}%",
+                f"{s['skew_25d']:.2f}",
+                f"{s['min_density_g']:.3f}",
+            ]
+            for s in slices
+        ],
+        "SVI fit quality per expiry; RMSE and skew in vol points",
+    )
+    bench_table = _table(
+        ["Options", "Scalar loop (ms)", "Vectorized (ms)", "Speedup", "Brent fallback", "Max diff"],
         [
             [
                 f"{b['n']:,}",
                 f"{b['scalar_ms']:.1f}",
                 f"{b['vectorized_ms']:.1f}",
-                f"{b['scalar_ms'] / b['vectorized_ms']:.1f}×",
-                f"{b['brent_share']:.1%}",
-                f"{b['max_abs_diff']:.1e}",
+                f"{b['scalar_ms'] / b['vectorized_ms']:.2f}×",
+                _pct(b["brent_share"]),
+                _sci(b["max_abs_diff"]),
             ]
             for b in report["benchmark"]
         ],
+        f"Solver timing, median of {report['repeats']} runs, {report['machine']}",
     )
-    svi_rows = _table(
-        ["Expiry", "ATM IV", "25-delta skew", "SVI RMSE", "Held-out RMSE", "min g(k)"],
+    solver_table = _table(
+        ["Round trip", "Value"],
         [
-            [
-                f"{s['days']:g} days",
-                f"{s['atm_iv']:.2%}",
-                f"{s['skew_25d']:.2f} vol pts",
-                f"{s['rmse_vol_points']:.3f} vol pts",
-                f"{s['held_out_rmse_vol_points']:.3f} vol pts",
-                f"{s['min_density_g']:.3f}",
-            ]
-            for s in p["slices"]
+            ["Random contracts", f"{rt['contracts']:,}"],
+            ["Identifiable (vega above 10<sup>−4</sup> × spot)", f"{rt['identifiable']:,}"],
+            ["Identifiable but unsolved", f"{rt['unsolved_identifiable']:,}"],
+            ["Recovered exactly (error 0)", f"{rt['exact']:,}"],
+            ["Median absolute error", _sci(rt["median_error"])],
+            ["Max absolute error", _sci(rt["max_error"])],
+            ["Solved by the Brent fallback", _pct(rt["brent_share"])],
         ],
+        f"IV solver round trip, seed {seed}; errors in volatility units",
     )
-    noise = _table(
-        ["IV noise sd", "Violations per tick", "Ticks with a violation"],
+    env_table = _table(
+        ["Field", "Value"],
         [
-            [f"{n['noise_sd']:.4f}", f"{n['per_tick']:.2f}", f"{n['share_of_ticks']:.0%}"]
-            for n in report["noise_sweep"]
+            ["Machine", machine_txt],
+            ["NumPy", report["versions"]["numpy"]],
+            ["SciPy", report["versions"]["scipy"]],
+            ["Seed", str(seed)],
+            ["Commit", f"<span class='mono'>{sha}</span>"],
+            ["Built", report["date"]],
         ],
+        "Build environment",
     )
-    style = (HERE / "static" / "style.css").read_text()
-    charts = (HERE / "static" / "charts.js").read_text()
+    chart_data = {
+        "noise": [
+            {
+                "label": f"{n['noise_sd']:.4f}" + (" default" if n["noise_sd"] == default_sd else ""),
+                "share": round(n["share_of_ticks"] * 100, 1),
+            }
+            for n in sweep
+        ],
+        "residuals": [
+            {
+                "days": s["days"],
+                "in_sample": round(s["rmse_vol_points"], 3),
+                "held_out": round(s["held_out_rmse_vol_points"], 3),
+                "points": s["residuals"],
+            }
+            for s in slices
+        ],
+    }
     data = json.dumps(report, allow_nan=False).replace("</", "<\\/")
-    repo = "https://github.com/allenwang0/volatilityscanner"
-    return f"""<!DOCTYPE html>
+    charts = json.dumps(chart_data, allow_nan=False).replace("</", "<\\/")
+    alarm_pct = _pct(alarm["share_of_ticks"])
+    spread_checked = sum(n["spread_checked"] for n in sweep)
+    flags_total = sum(n["violations"] for n in sweep)
+    held_label = ", ".join(
+        f"{s['days']:g} days {s['held_out_rmse_vol_points']:.3f}" for s in slices
+    )
+    title = "Volatility Scanner report"
+    desc = (
+        "An implied-volatility solver, SVI smile fits and static-arbitrage checks, "
+        f"run on a seeded simulated option chain (seed {seed})."
+    )
+    toggle = (
+        '<div class="seg" role="radiogroup" aria-label="View" data-view-toggle>'
+        '<button role="radio" aria-checked="true" data-value="chart">Chart</button>'
+        '<button role="radio" aria-checked="false" data-value="table">Table</button></div>'
+    )
+    return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Volatility Scanner report · Allen Wang</title>
-<script>try{{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}}catch(e){{}}</script>
-<script src="{PLOTLY}"></script>
-<style>{style}
-/* Report only: the shared allenwang0.github.io palette, font and 960px width. */
-:root {{ --font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --bg: #fbfbf9; --ink: #111111; --muted: #5f5f63; --accent: #d70015; color-scheme: light; }}
-@media (prefers-color-scheme: dark) {{
-  :root:not([data-theme="light"]) {{ --bg: #0b0b0b; --panel: #141414; --ink: #f2f2ef; --muted: #a1a1a6; --accent: #ff5a4f; color-scheme: dark; }}
-}}
-:root[data-theme="dark"] {{ --bg: #0b0b0b; --panel: #141414; --ink: #f2f2ef; --muted: #a1a1a6; --accent: #ff5a4f; color-scheme: dark; }}
-body {{ max-width: 960px; }}
-.site-nav {{ display: flex; justify-content: space-between; gap: 16px; padding: 0 0 16px; font-size: 14px; }}
-.site-nav a {{ color: var(--muted); text-decoration: none; }}
-.site-nav a:hover {{ color: var(--ink); }}
-.synthetic {{ color: var(--muted); font-size: 14px; margin: 0 0 8px; }}
-.prose {{ max-width: 760px; color: var(--muted); font-size: 0.92rem; }}
-.prose a {{ color: inherit; }}
-.grid {{ align-items: start; }}
-table.num th, table.num td {{ text-align: right; font-variant-numeric: tabular-nums; }}
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{title} · Allen Wang</title>
+<meta name="description" content="{html.escape(desc)}">
+<meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0b0b" media="(prefers-color-scheme: dark)">
+<script>try{{var t=localStorage.getItem("theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}}catch(e){{}}</script>
+<link rel="stylesheet" href="kit/report.css">
+<link rel="stylesheet" href="report.local.css">
+<script src="kit/report.js" defer></script>
+<script src="kit/charts.js" defer></script>
+<script src="report.local.js" defer></script>
 </head>
 <body>
-<nav class="site-nav" aria-label="Site"><a href="https://allenwang0.github.io/">← Allen Wang</a><a href="{repo}">Source</a></nav>
-<header>
-  <h1>Volatility Scanner report</h1>
-  <div class="controls"><button type="button" id="theme">Theme</button></div>
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar">
+  <div class="wrap">
+    <a class="back" href="https://allenwang0.github.io/">← Allen Wang</a>
+    <span class="title" aria-hidden="true">{title}</span>
+    <a class="pill" href="{REPO}">Code ↗</a>
+  </div>
 </header>
-<p class="synthetic" id="data-label">Synthetic data: simulated option chain, seed {report["seed"]}.</p>
-<p class="prose">One tick of the seeded simulator: {p["quotes_checked"]} quotes (calls and puts, 20 strikes,
-expiries {", ".join(f"{s['days']:g}" for s in p["slices"])} days), spot {p["spot"]:.2f}. Every number on this
-page comes from <code>python report.py --seed {report["seed"]}</code>. The dashboard in the repo
-runs locally (<a href="{repo}#run-it">see the README</a>) and streams the same analysis twice a second.</p>
-<main class="grid">
-  <section class="panel">
-    <h2>Smile per expiry</h2>
-    <p class="takeaway" id="smile-takeaway"></p>
-    <div id="smile" class="chart"></div>
-    <ul id="failed" class="failed"></ul>
+<main id="main">
+  <section class="hero wrap" aria-labelledby="h1">
+    <p class="eyebrow">Options analytics · Python</p>
+    <h1 id="h1">Arbitrage checks fire on {alarm_pct} of ticks once quotes carry {alarm["noise_sd"]:g} IV noise</h1>
+    <p class="lede">An implied-volatility solver, SVI smile fits and static-arbitrage checks, run
+    on a seeded simulated option chain. The solver and fits hold up. The arbitrage checks need a
+    noise threshold before a live flag means anything.</p>
+    <p class="conditions" id="data-label"><span class="key">Synthetic data: simulated option chain, seed {seed}.</span><span>{p["quotes_checked"]} quotes, expiries {expiries} days</span><span>One seed</span></p>
+    <div class="ratio"><span class="fig">{alarm_pct}</span><span class="cap">of {alarm["ticks"]} ticks
+    had at least one false butterfly flag at noise sd {alarm["noise_sd"]:g}
+    ({_pts(alarm["noise_sd"])} vol points). At the simulator's default {default_sd:g},
+    {quiet["ticks_flagged"]} of {quiet["ticks"]} did.</span></div>
   </section>
-  <section class="panel">
-    <h2>ATM term structure</h2>
-    <p class="takeaway" id="term-takeaway"></p>
-    <div id="term" class="chart small"></div>
-    <h2>25-delta skew</h2>
-    <p class="takeaway" id="skew-takeaway"></p>
-    <div id="skew" class="chart small"></div>
+
+  <section class="wrap" aria-label="Key results">
+    <div class="bento">
+      <div class="card span-6"><span class="label">SVI fit error, held-out strikes</span><span class="metric">{_range(held)} <span class="unit">vol pts</span></span><span class="cmp">vs {_range(in_sample)} in-sample. The {worst["days"]:g}-day fit is {worst_ratio:.2f}× worse held out.</span><span class="foot">RMSE per expiry · every third strike held out · one tick</span></div>
+      <div class="card span-6"><span class="label">IV solver round trip, max error</span><span class="metric">{_sci(rt["max_error"])}</span><span class="cmp">{rt["identifiable"]:,} of {rt["contracts"]:,} contracts identifiable; {rt["unsolved_identifiable"]} unsolved</span><span class="foot">Random contracts priced exactly, then solved back</span></div>
+      <div class="card span-6"><span class="label">Arbitrage checks at default noise</span><span class="metric">{len(p["violations"])} <span class="unit">of {p["conditions_checked"]}</span></span><span class="cmp">checks violated on this tick, IV noise sd {default_sd:g}</span><span class="foot">{p["quotes_checked"]} quotes on one simulated tick</span></div>
+      <div class="card span-6"><span class="label">Vectorized solver speedup</span><span class="metric">{speedup:.2f}×</span><span class="cmp">{big["vectorized_ms"]:.1f} vs {big["scalar_ms"]:.1f} ms for {big["n"]:,} options in a scalar loop</span><span class="foot">{machine_txt} · median of {report["repeats"]} runs</span></div>
+    </div>
   </section>
-  <section class="panel wide">
-    <h2>Static arbitrage</h2>
-    <div id="arb" class="table-wrap"></div>
+
+  <section class="s wrap" id="noise" aria-labelledby="h-noise">
+    <p class="eyebrow">How noise-sensitive are the checks?</p>
+    <h2 id="h-noise">Quote noise of {_pts(alarm["noise_sd"])} vol points trips the butterfly check on {alarm_pct} of ticks</h2>
+    <p class="lede">Each quote's IV gets independent noise. Once that noise exceeds a butterfly's
+    value, the convexity check fires even though the underlying surface has no arbitrage.</p>
+    <figure class="figure" aria-labelledby="f-noise">
+      <div class="fig-head"><div><h3 id="f-noise">False alarms rise from none to every tick as noise grows from {sweep[0]["noise_sd"]:g} to {sweep[-1]["noise_sd"]:g}</h3><p class="sub">Share of ticks with at least one violation · {alarm["ticks"]} ticks per level · seed {seed}</p></div>
+        {toggle}</div>
+      <div id="c-noise"></div><div id="t-noise" class="rk-table">{noise_table}</div>
+      <figcaption>Each bar is the share of {alarm["ticks"]} simulated ticks flagged at one IV noise
+      sd (volatility units; ×100 for vol points). Single seed, so no interval.</figcaption>
+    </figure>
+    <p class="caveat"><b>Every flag here is a false alarm.</b> The simulated surface passes every
+    check at the default noise ({quiet["ticks_flagged"]} of {quiet["ticks"]} ticks flagged). The
+    chain has no bid-ask spread, so {spread_checked} of {flags_total} flags could be compared with
+    the cost of trading them.</p>
   </section>
-  <section class="panel wide">
-    <h2>SVI fit per expiry</h2>
-    <p class="takeaway">Held-out RMSE: fit on two thirds of the strikes, scored on the rest.
-    g(k) is the Gatheral-Jacquier density on 201 points; negative means butterfly arbitrage.</p>
-    <div class="table-wrap">{svi_rows}</div>
+
+  <section class="s wrap" id="fits" aria-labelledby="h-fits">
+    <p class="eyebrow">How well does SVI fit?</p>
+    <h2 id="h-fits">SVI misses held-out strikes by {_range(held)} vol points; the {worst["days"]:g}-day fit is {worst_ratio:.2f}× worse than in-sample</h2>
+    <p class="lede">Each expiry is fit on two thirds of its out-of-the-money strikes and scored on
+    every third strike. Beyond {worst["days"]:g} days, held-out error stays at or below
+    {others_max:.3f} vol points.</p>
+    <figure class="figure" aria-labelledby="f-fits">
+      <div class="fig-head"><div><h3 id="f-fits">Held-out residuals are widest on the {worst["days"]:g}-day smile</h3><p class="sub">Quote IV minus SVI fit · vol points · one panel per expiry</p></div>
+        {toggle}</div>
+      <div id="c-fits" role="img" aria-label="Residuals per expiry. Held-out RMSE in vol points: {held_label}."></div><div id="t-fits" class="rk-table">{fit_table}</div>
+      <figcaption>Filled dots are the strikes each fit was trained on; open dots are held out. All
+      panels share both scales. The table adds ATM IV, 25-delta skew and the minimum
+      Gatheral-Jacquier density g(k) on 201 points (a negative value would mean butterfly
+      arbitrage).</figcaption>
+    </figure>
+    <p class="caveat"><b>SVI is expected to fit here.</b> The simulator generates SVI-shaped smiles
+    and adds noise of sd {_pts(default_sd)} vol points, so in-sample error mostly measures that
+    noise. This tests the fitting code, not whether SVI suits real markets.</p>
   </section>
-  <section class="panel wide">
-    <h2>IV solver round trip</h2>
-    <p class="takeaway" id="rt-takeaway">{rt["identifiable"]:,} of {ROUND_TRIP_CONTRACTS:,} random
-    contracts have vega above 1e-4 S; max error {rt["max_error"]:.1e}, median {rt["median_error"]:.1e},
-    {rt["unsolved_identifiable"]} unsolved. Exact recoveries (error 0) are drawn at -17.</p>
-    <div id="hist" class="chart small"></div>
+
+  <section class="s wrap" id="solver" aria-labelledby="h-solver">
+    <p class="eyebrow">Is the IV solver exact?</p>
+    <h2 id="h-solver">The solver recovers every identifiable contract to within {_sci(rt["max_error"])}</h2>
+    <p class="lede">{rt["contracts"]:,} random contracts are priced with Black-Scholes and solved
+    back. {rt["contracts"] - rt["identifiable"]:,} have too little vega for their volatility to be
+    identifiable, so they are excluded rather than reported as solved.</p>
+    {solver_table}
   </section>
-  <section class="panel wide">
-    <h2>Vectorized solver benchmark</h2>
-    <p class="takeaway">{html.escape(report["machine"])}, median of 5 runs.</p>
-    <div class="table-wrap">{bench}</div>
-    <h2 style="margin-top:16px">Quote noise and false alarms</h2>
-    <p class="takeaway">Independent IV noise on each quote breaks butterfly convexity once it
-    exceeds the butterfly's value; {NOISE_TICKS} ticks per level.</p>
-    <div class="table-wrap">{noise}</div>
+
+  <section class="s wrap" id="speed" aria-labelledby="h-speed">
+    <p class="eyebrow">Does vectorizing pay?</p>
+    <h2 id="h-speed">The vectorized solver is {speedup:.2f}× faster than a scalar loop on {big["n"]:,} options</h2>
+    <p class="lede">Both solvers agree to within {_sci(big["max_abs_diff"])}. The gain is modest:
+    {_pct(big["brent_share"])} of these options still take the Brent fallback.</p>
+    {bench_table}
+    <p class="caveat"><b>Timing depends on the machine.</b> This build ran on {machine_txt}. The
+    Pages build re-times on every deploy, so these numbers change with the runner.</p>
+  </section>
+
+  <section class="s wrap" id="method" aria-labelledby="h-method">
+    <p class="eyebrow">Methodology</p>
+    <h2 id="h-method">How this was measured</h2>
+    <div class="prose" style="margin-top:24px">
+      <p>The simulator draws one tick of {p["quotes_checked"]} calls and puts across {len(slices)}
+      expiries around spot {p["spot"]:,.2f}. Each expiry's true smile is a raw-SVI curve from
+      <span class="mono">simulator.py</span>, and each quote's IV gets independent normal noise.</p>
+      <p>Implied volatilities are solved with Newton steps and a Brent fallback, fit per expiry
+      with SVI, and checked for static arbitrage. The noise sweep reruns the same seed at
+      {len(sweep)} noise levels for {alarm["ticks"]} ticks each.</p>
+    </div>
+    <div class="two">
+      <div><h3>What this shows</h3><ul><li>The solver is exact to {_sci(rt["max_error"])} wherever vega is identifiable.</li><li>SVI fits a simulated smile to {_range(held)} vol points on held-out strikes.</li><li>Butterfly checks need a noise threshold: {_pts(alarm["noise_sd"])} vol points of quote noise flags {alarm_pct} of ticks.</li></ul></div>
+      <div><h3>What it doesn't show</h3><ul><li>Behavior on market quotes. Every number here is simulated.</li><li>Whether SVI is the right model, since the simulator generates SVI smiles.</li><li>Extrapolation: held-out strikes sit between training strikes.</li><li>Variation across seeds. This is one seed and one tick.</li></ul></div>
+    </div>
+  </section>
+
+  <section class="s wrap" id="reproduce" aria-labelledby="h-repro">
+    <p class="eyebrow">Reproduce</p>
+    <h2 id="h-repro">Run it yourself</h2>
+    <div class="codewrap"><pre><code>git clone {REPO}.git && cd volatilityscanner
+make setup PYTHON=python3.12
+.venv/bin/python report.py --seed {seed} --out docs/index.html   # this page
+.venv/bin/python main.py --seed {seed}                           # live dashboard</code></pre></div>
+    <details>
+      <summary>Environment for this build · 6 rows</summary>
+      {env_table}
+    </details>
   </section>
 </main>
+<footer><div class="wrap"><span><a href="https://allenwang0.github.io/">← Allen Wang</a><a href="{REPO}">Code ↗</a></span><span>Data from commit <span class="mono">{sha}</span> · {report["date"]}</span></div></footer>
 <script type="application/json" id="report-data">{data}</script>
-<script>{charts}</script>
-<script>
-(function () {{
-  var report = JSON.parse(document.getElementById("report-data").textContent);
-  var p = report.payload, $ = function (id) {{ return document.getElementById(id); }};
-  var state = {{ sortDesc: true }}, highlight = null;
-  function draw() {{
-    var t = VS.takeaways(p);
-    $("smile-takeaway").textContent = t.smile;
-    $("term-takeaway").textContent = t.term;
-    $("skew-takeaway").textContent = t.skew;
-    VS.renderSmile($("smile"), p, highlight);
-    VS.renderFailed($("failed"), p);
-    VS.renderTerm($("term"), p);
-    VS.renderSkew($("skew"), p);
-    VS.renderArbTable($("arb"), p, state, function (v) {{
-      highlight = VS.highlightFor(p, v); VS.renderSmile($("smile"), p, highlight);
-    }});
-    var ink = getComputedStyle(document.documentElement).getPropertyValue("--ink");
-    var grid = getComputedStyle(document.documentElement).getPropertyValue("--grid");
-    Plotly.react($("hist"), [{{ type: "histogram", x: report.round_trip.log10_error, marker: {{ color: "#0072B2" }},
-      hovertemplate: "log10 error %{{x}}<br>%{{y}} contracts<extra></extra>" }}], {{
-      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)", font: {{ color: ink, family: getComputedStyle(document.documentElement).getPropertyValue("--font") }},
-      margin: {{ l: 56, r: 12, t: 8, b: 48 }}, bargap: 0.05,
-      xaxis: {{ title: {{ text: "log10 |σ̂ − σ|" }}, gridcolor: grid }},
-      yaxis: {{ title: {{ text: "Contracts" }}, gridcolor: grid }} }}, {{ responsive: true, displaylogo: false }});
-  }}
-  $("theme").addEventListener("click", function () {{
-    var root = document.documentElement;
-    var dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-    root.dataset.theme = dark ? "light" : "dark";
-    try {{ localStorage.setItem("theme", root.dataset.theme); }} catch (e) {{ /* not saved; still applied */ }}
-    draw();
-  }});
-  draw();
-}})();
-</script>
+<script type="application/json" id="chart-data">{charts}</script>
 </body>
 </html>
 """

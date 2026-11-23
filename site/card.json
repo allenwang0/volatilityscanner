@@ -1,17 +1,17 @@
 {
   "schema_version": 1,
   "repo": "volatilityscanner",
-  "sha": "4833c7b7ba7e27fda2a7f478f821c802fed27965",
-  "generated_at": "2026-11-12T05:57:29Z",
+  "sha": "c0ba59e1b9b0054e449ce4697ada949829d2dacc",
+  "generated_at": "2026-11-23T04:35:30Z",
   "command": "python report.py --seed 7 --out docs/index.html --card site/card.json",
   "data_note": "Seeded simulated chain, seed 7, SVI parameters in simulator.py",
   "metric": {
-    "label": "SVI fit RMSE, nearest monthly expiry",
-    "value": 0.017645,
+    "label": "SVI held-out RMSE, nearest monthly expiry",
+    "value": 0.020723,
     "unit": "vol points",
     "higher_is_better": false
   },
-  "takeaway": "SVI fits the 30-day simulated smile to 0.02 vol points RMSE; 25-delta skew is 6.3 vol points.",
+  "takeaway": "SVI fits the 30-day simulated smile to 0.021 vol points on held-out strikes (0.018 in-sample).",
   "chart": {
     "type": "line",
     "x_label": "Moneyness K/S",
@@ -22,7 +22,7 @@
     "y_scale": "linear",
     "series": [
       {
-        "name": "Market quotes",
+        "name": "Simulated quotes",
         "style": "dots",
         "points": [
           [

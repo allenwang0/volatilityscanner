@@ -531,8 +531,8 @@ def build_page(res, bench, shas):
         ),
         support=Raw(
             f"<b>Usable vega</b> means the option's price still responds to volatility: vega above "
-            f"{cut} × spot. Below that, many volatilities give the same price to machine precision, so no "
-            f"solver can recover one.{R('E2')}"
+            f"{cut} × spot. Below that, many volatilities give the same price to machine precision, so the "
+            f"price cannot pin one down.{R('E2')}"
         ),
         context=(
             f"Simulated data, no market quotes: {d['contracts']:,} Black–Scholes contracts priced from known "
@@ -869,16 +869,16 @@ def build_page(res, bench, shas):
     for name in facts["checks"]:
         what, rule = CHECK_TEXT.get(name, (name, ""))
         check_rows.append(
-            [
+            (
                 Raw(f"<code>{esc(name)}</code>"),
                 Raw(f'{esc(what)}<br><span class="muted">{esc(rule)}</span>'),
-            ]
+            )
         )
-    checks_table = rk.table(
-        f"The {word(n_checks)} static no-arbitrage checks",
-        ["Check", "What it requires"],
-        check_rows,
-        wrap_cols={1},
+    checks_table = rk.join(
+        [
+            Raw(f'<h3 class="sub">The {word(n_checks)} static no-arbitrage checks</h3>'),
+            rk.methodology(check_rows),
+        ]
     )
     base = next(r for r in d["sweep"] if r["noise_sd"] == facts["noise_sd"])
     top = d["sweep"][-1]

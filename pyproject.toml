@@ -55,7 +55,7 @@ ignore = ["B905"]
 # The report is an HTML template; its long lines are page content.
 "report.py" = ["E501"]
 # The page generator's long lines are page copy.
-"scripts/build_report.py" = ["E501"]
+"scripts/build_report.py" = ["E501", "E731"]
 
 [tool.mypy]
 python_version = "3.11"
